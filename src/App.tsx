@@ -107,6 +107,7 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [pushNotification, setPushNotification] = useState<{ title: string, body: string } | null>(null);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'info' } | null>(null);
+  const [isCitationModalOpen, setIsCitationModalOpen] = useState(false);
 
   const showToast = (message: string, type: 'success' | 'info' = 'success') => {
     setToast({ message, type });
@@ -208,6 +209,7 @@ export default function App() {
           searchQuery={searchQuery}
           onTagClick={handleTagClick}
           preprints={allPreprints}
+          showToast={showToast}
         />
       );
       case 'library': return (
@@ -218,6 +220,7 @@ export default function App() {
           onPreprintClick={(p) => { setSelectedPreprint(p); setCurrentScreen('reader'); }}
           onTagClick={handleTagClick}
           onAuthorClick={handleUserClick}
+          showToast={showToast}
         />
       );
       case 'collection-detail': return (
@@ -229,6 +232,7 @@ export default function App() {
           onPreprintClick={(p) => { setSelectedPreprint(p); setCurrentScreen('reader'); }}
           onTagClick={handleTagClick}
           onAuthorClick={handleUserClick}
+          showToast={showToast}
         />
       );
       case 'reader': return (
@@ -239,25 +243,28 @@ export default function App() {
           onRate={(rating) => handleRate(selectedPreprint?.id || allPreprints[0].id, rating)}
           onTagClick={handleTagClick}
           onAuthorClick={handleUserClick}
+          showToast={showToast}
+          onCite={() => setIsCitationModalOpen(true)}
         />
       );
-      case 'profile': return <ProfileScreen onEdit={() => setCurrentScreen('edit-profile')} onSettings={() => setCurrentScreen('notification-settings')} preprints={allPreprints} />;
-      case 'edit-profile': return <EditProfileScreen onBack={() => setCurrentScreen('profile')} />;
-      case 'notification-settings': return <SettingsScreen onBack={() => setCurrentScreen('profile')} onNavigate={(s: Screen) => setCurrentScreen(s)} />;
-      case 'change-password': return <ChangePasswordScreen onBack={() => setCurrentScreen('notification-settings')} />;
-      case '2fa-setup': return <TwoFactorAuthScreen onBack={() => setCurrentScreen('notification-settings')} onNext={() => setCurrentScreen('2fa-backup')} />;
-      case '2fa-backup': return <TwoFactorBackupCodesScreen onBack={() => setCurrentScreen('2fa-setup')} onDone={() => setCurrentScreen('notification-settings')} />;
-      case 'security-log': return <SecurityLogScreen onBack={() => setCurrentScreen('notification-settings')} />;
-      case 'notifications': return <NotificationsScreen onDailyDigest={() => setCurrentScreen('daily-digest')} onWeeklyDigest={() => setCurrentScreen('weekly-digest')} onBack={() => setCurrentScreen('home')} />;
-      case 'trends': return <TrendsScreen onTopicClick={() => setCurrentScreen('topic-insight')} />;
-      case 'daily-digest': return <DailyDigestScreen onBack={() => setCurrentScreen('notifications')} />;
-      case 'weekly-digest': return <WeeklyDigestScreen onBack={() => setCurrentScreen('notifications')} />;
+      case 'profile': return <ProfileScreen onEdit={() => setCurrentScreen('edit-profile')} onSettings={() => setCurrentScreen('notification-settings')} preprints={allPreprints} showToast={showToast} />;
+      case 'edit-profile': return <EditProfileScreen onBack={() => setCurrentScreen('profile')} showToast={showToast} />;
+      case 'notification-settings': return <SettingsScreen onBack={() => setCurrentScreen('profile')} onNavigate={(s: Screen) => setCurrentScreen(s)} showToast={showToast} />;
+      case 'change-password': return <ChangePasswordScreen onBack={() => setCurrentScreen('notification-settings')} showToast={showToast} />;
+      case '2fa-setup': return <TwoFactorAuthScreen onBack={() => setCurrentScreen('notification-settings')} onNext={() => setCurrentScreen('2fa-backup')} showToast={showToast} />;
+      case '2fa-backup': return <TwoFactorBackupCodesScreen onBack={() => setCurrentScreen('2fa-setup')} onDone={() => setCurrentScreen('notification-settings')} showToast={showToast} />;
+      case 'security-log': return <SecurityLogScreen onBack={() => setCurrentScreen('notification-settings')} showToast={showToast} />;
+      case 'notifications': return <NotificationsScreen onDailyDigest={() => setCurrentScreen('daily-digest')} onWeeklyDigest={() => setCurrentScreen('weekly-digest')} onBack={() => setCurrentScreen('home')} showToast={showToast} />;
+      case 'trends': return <TrendsScreen onTopicClick={() => setCurrentScreen('topic-insight')} showToast={showToast} />;
+      case 'daily-digest': return <DailyDigestScreen onBack={() => setCurrentScreen('notifications')} showToast={showToast} />;
+      case 'weekly-digest': return <WeeklyDigestScreen onBack={() => setCurrentScreen('notifications')} showToast={showToast} />;
       case 'topic-insight': return (
         <TopicInsightScreen 
           onBack={() => setCurrentScreen('trends')} 
           onPreprintClick={(p) => { setSelectedPreprint(p); setCurrentScreen('reader'); }}
           onTagClick={handleTagClick}
           onAuthorClick={handleUserClick}
+          showToast={showToast}
         />
       );
       case 'user-profile': return (
@@ -268,6 +275,7 @@ export default function App() {
           onToggleSave={toggleSave}
           onTagClick={handleTagClick}
           savedPreprints={savedPreprints}
+          showToast={showToast}
         />
       );
       case 'tag-results': return (
@@ -280,9 +288,11 @@ export default function App() {
           savedPreprints={savedPreprints}
           onTagClick={handleTagClick}
           onAuthorClick={handleUserClick}
+          showToast={showToast}
         />
       );
-      default: return <HomeScreen onPreprintClick={(p) => { setSelectedPreprint(p); setCurrentScreen('reader'); }} savedPreprints={savedPreprints} onToggleSave={toggleSave} searchQuery={searchQuery} onTagClick={handleTagClick} preprints={allPreprints} />;
+      case 'feeds': return <CustomFeedsScreen onBack={() => setCurrentScreen('home')} showToast={showToast} />;
+      default: return <HomeScreen onPreprintClick={(p) => { setSelectedPreprint(p); setCurrentScreen('reader'); }} savedPreprints={savedPreprints} onToggleSave={toggleSave} searchQuery={searchQuery} onTagClick={handleTagClick} preprints={allPreprints} showToast={showToast} />;
     }
   };
 
@@ -341,6 +351,17 @@ export default function App() {
                 <span className="text-sm font-bold">{toast.message}</span>
               </div>
             </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Citation Modal */}
+        <AnimatePresence>
+          {isCitationModalOpen && selectedPreprint && (
+            <CitationModal 
+              preprint={selectedPreprint} 
+              onClose={() => setIsCitationModalOpen(false)} 
+              showToast={showToast}
+            />
           )}
         </AnimatePresence>
 
@@ -411,9 +432,9 @@ export default function App() {
         ) : currentScreen === 'reader' ? (
           <nav className="shrink-0 bg-white dark:bg-background-dark border-t border-slate-200 dark:border-slate-800 flex justify-around p-3 pb-6">
             <NavItem icon={<BookOpen />} label="Read" active={true} onClick={() => {}} />
-            <NavItem icon={<Menu />} label="Outline" active={false} onClick={() => {}} />
-            <NavItem icon={<Share2 />} label="Share" active={false} onClick={() => {}} />
-            <NavItem icon={<Download />} label="PDF" active={false} onClick={() => {}} />
+            <NavItem icon={<Menu />} label="Outline" active={false} onClick={() => showToast('Outline feature coming soon!')} />
+            <NavItem icon={<Share2 />} label="Share" active={false} onClick={() => showToast('Paper shared to your network!')} />
+            <NavItem icon={<Download />} label="PDF" active={false} onClick={() => showToast('Downloading PDF version...')} />
           </nav>
         ) : null}
       </div>
@@ -433,19 +454,62 @@ function NavItem({ icon, label, active, onClick }: { icon: React.ReactNode, labe
   );
 }
 
-function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery, onTagClick, preprints }: { 
+const SOURCE_CATEGORIES: Record<string, string[]> = {
+  'arXiv': ['Physics', 'Computer Science', 'Mathematics', 'Quantitative Biology', 'Quantitative Finance', 'Statistics', 'Electrical Engineering', 'Economics'],
+  'bioRxiv': ['Animal Behavior', 'Biochemistry', 'Bioengineering', 'Bioinformatics', 'Cancer Biology', 'Cell Biology', 'Genetics', 'Microbiology', 'Neuroscience'],
+  'medRxiv': ['Epidemiology', 'Health Informatics', 'Infectious Diseases', 'Medical Education', 'Neurology', 'Oncology', 'Public Health'],
+  'PhilPapers': ['Epistemology', 'Ethics', 'Metaphysics', 'Philosophy of Mind', 'Philosophy of Science'],
+  'OA Journals': ['Humanities', 'Social Sciences', 'Life Sciences', 'Physical Sciences'],
+};
+
+function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery, onTagClick, preprints, showToast }: { 
   onPreprintClick: (p: Preprint) => void, 
   savedPreprints: Preprint[], 
   onToggleSave: (p: Preprint) => void,
   searchQuery?: string,
   onTagClick?: (tag: string) => void,
-  preprints: Preprint[]
+  preprints: Preprint[],
+  showToast: (msg: string) => void
 }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [sources, setSources] = useState(['All Sources', 'arXiv', 'bioRxiv', 'medRxiv', 'ChemRxiv', 'SSRN', 'Research Square', 'PhilPapers', 'OA Journals', 'OA Articles']);
-  const [newSource, setNewSource] = useState('');
+  const [sources, setSources] = useState(['arXiv', 'bioRxiv', 'medRxiv', 'ChemRxiv', 'SSRN', 'Research Square', 'PhilPapers', 'OA Journals', 'OA Articles']);
+  const [activeSources, setActiveSources] = useState<string[]>([]);
+  const [activeCategories, setActiveCategories] = useState<Record<string, string[]>>({});
+  const [pubType, setPubType] = useState('All Types');
+  const [sortBy, setSortBy] = useState('Relevance');
+  const [dateRange, setDateRange] = useState('All Time');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
   const [isAddingSource, setIsAddingSource] = useState(false);
-  const [activeSource, setActiveSource] = useState('All Sources');
+  const [newSource, setNewSource] = useState('');
+  const [showCategoryMenu, setShowCategoryMenu] = useState<string | null>(null);
+
+  const handleToggleSource = (source: string) => {
+    if (activeSources.includes(source)) {
+      setActiveSources(activeSources.filter(s => s !== source));
+      const newCats = { ...activeCategories };
+      delete newCats[source];
+      setActiveCategories(newCats);
+    } else {
+      setActiveSources([...activeSources, source]);
+      setShowCategoryMenu(source);
+    }
+  };
+
+  const handleToggleCategory = (source: string, category: string) => {
+    const sourceCats = activeCategories[source] || [];
+    if (sourceCats.includes(category)) {
+      setActiveCategories({
+        ...activeCategories,
+        [source]: sourceCats.filter(c => c !== category)
+      });
+    } else {
+      setActiveCategories({
+        ...activeCategories,
+        [source]: [...sourceCats, category]
+      });
+    }
+  };
 
   const handleAddSource = () => {
     if (newSource.trim() && !sources.includes(newSource.trim())) {
@@ -455,26 +519,102 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
     }
   };
 
-  const filteredPreprints = preprints.filter(p => {
-    const matchesSource = activeSource === 'All Sources' || p.source === activeSource;
-    const matchesSearch = !searchQuery || 
-      p.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      p.authors.some(a => a.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      p.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesSource && matchesSearch;
-  });
+  const filteredPreprints = preprints
+    .filter(p => {
+      // Source & Category Filter
+      const matchesSource = activeSources.length === 0 || activeSources.includes(p.source);
+      const sourceCats = activeCategories[p.source] || [];
+      const matchesCategory = sourceCats.length === 0 || p.tags.some(t => sourceCats.includes(t));
+      
+      // Search Filter
+      const matchesSearch = !searchQuery || 
+        p.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        p.authors.some(a => a.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        p.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
+      
+      // Publication Type Filter
+      const matchesPubType = pubType === 'All Types' || p.type === pubType;
+      
+      // Date Range Filter
+      let matchesDate = true;
+      const paperDate = new Date(p.date);
+      const now = new Date();
+      
+      if (dateRange === 'Last 24 hours') {
+        matchesDate = (now.getTime() - paperDate.getTime()) <= 24 * 60 * 60 * 1000;
+      } else if (dateRange === 'Last 7 days') {
+        matchesDate = (now.getTime() - paperDate.getTime()) <= 7 * 24 * 60 * 60 * 1000;
+      } else if (dateRange === 'Last 30 days') {
+        matchesDate = (now.getTime() - paperDate.getTime()) <= 30 * 24 * 60 * 60 * 1000;
+      } else if (dateRange === 'Custom Range' && customStartDate && customEndDate) {
+        const start = new Date(customStartDate);
+        const end = new Date(customEndDate);
+        matchesDate = paperDate >= start && paperDate <= end;
+      }
+
+      return matchesSource && matchesCategory && matchesSearch && matchesPubType && matchesDate;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'Newest First') {
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+      } else if (sortBy === 'Most Cited') {
+        return (b.citations || 0) - (a.citations || 0);
+      } else if (sortBy === 'User Rating') {
+        return (b.rating || 0) - (a.rating || 0);
+      } else if (sortBy === 'Number of Saves') {
+        return (b.savesCount || 0) - (a.savesCount || 0);
+      } else if (sortBy === 'Trending Score') {
+        return (b.views || 0) - (a.views || 0);
+      }
+      return 0;
+    });
   
   return (
     <div className="p-4">
       <div className="flex gap-2 overflow-x-auto no-scrollbar mb-4 items-center">
-        {sources.map((source, i) => (
-          <button 
-            key={source}
-            onClick={() => setActiveSource(source)}
-            className={`${activeSource === source ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700'} px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap flex items-center gap-1`}
-          >
-            {source} {i > 0 && source !== 'All Sources' && <ChevronRight className="size-4 rotate-90" />}
-          </button>
+        <button 
+          onClick={() => { setActiveSources([]); setActiveCategories({}); }}
+          className={`${activeSources.length === 0 ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700'} px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap`}
+        >
+          All Sources
+        </button>
+        {sources.map((source) => (
+          <div key={source} className="relative shrink-0">
+            <button 
+              onClick={() => handleToggleSource(source)}
+              className={`${activeSources.includes(source) ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700'} px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap flex items-center gap-1`}
+            >
+              {source} {SOURCE_CATEGORIES[source] && <ChevronRight className={`size-4 transition-transform ${showCategoryMenu === source ? 'rotate-90' : ''}`} />}
+            </button>
+            
+            <AnimatePresence>
+              {showCategoryMenu === source && SOURCE_CATEGORIES[source] && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setShowCategoryMenu(null)} />
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 10 }}
+                    className="absolute top-full left-0 mt-2 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-40 p-4 max-h-80 overflow-y-auto"
+                  >
+                    <h4 className="text-[10px] font-bold uppercase text-slate-400 mb-3 tracking-widest">Select Categories</h4>
+                    <div className="space-y-1">
+                      {SOURCE_CATEGORIES[source].map(cat => (
+                        <button
+                          key={cat}
+                          onClick={() => handleToggleCategory(source, cat)}
+                          className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between ${activeCategories[source]?.includes(cat) ? 'bg-primary/10 text-primary' : 'hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+                        >
+                          {cat}
+                          {activeCategories[source]?.includes(cat) && <PlusCircle className="size-3 rotate-45" />}
+                        </button>
+                      ))}
+                    </div>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
+          </div>
         ))}
         
         {isAddingSource ? (
@@ -527,16 +667,41 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
               <div className="pt-4 pb-2 grid grid-cols-1 md:grid-cols-3 gap-4 border-b border-slate-100 dark:border-slate-800 mb-4">
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold uppercase text-slate-400">Date Range</label>
-                  <select className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs outline-none">
+                  <select 
+                    value={dateRange}
+                    onChange={(e) => setDateRange(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs outline-none"
+                  >
+                    <option>All Time</option>
                     <option>Last 24 hours</option>
                     <option>Last 7 days</option>
                     <option>Last 30 days</option>
-                    <option>Custom Range...</option>
+                    <option>Custom Range</option>
                   </select>
+                  {dateRange === 'Custom Range' && (
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      <input 
+                        type="date" 
+                        value={customStartDate}
+                        onChange={(e) => setCustomStartDate(e.target.value)}
+                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-1.5 text-[10px] outline-none"
+                      />
+                      <input 
+                        type="date" 
+                        value={customEndDate}
+                        onChange={(e) => setCustomEndDate(e.target.value)}
+                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-1.5 text-[10px] outline-none"
+                      />
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold uppercase text-slate-400">Publication Type</label>
-                  <select className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs outline-none">
+                  <select 
+                    value={pubType}
+                    onChange={(e) => setPubType(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs outline-none"
+                  >
                     <option>All Types</option>
                     <option>Preprint</option>
                     <option>Peer-Reviewed</option>
@@ -545,10 +710,16 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold uppercase text-slate-400">Sort By</label>
-                  <select className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs outline-none">
+                  <select 
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs outline-none"
+                  >
                     <option>Relevance</option>
                     <option>Newest First</option>
                     <option>Most Cited</option>
+                    <option>User Rating</option>
+                    <option>Number of Saves</option>
                     <option>Trending Score</option>
                   </select>
                 </div>
@@ -593,7 +764,16 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
 
 function CustomFeedsScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
   const [activeFrequency, setActiveFrequency] = useState('Daily');
-  const sources = ['Preprints', 'OA Journals', 'Clinical Trials', 'GitHub', 'Patents'];
+  const [selectedSources, setSelectedSources] = useState<string[]>(['Preprints']);
+  const sources = ['Preprints', 'OA Journals', 'Clinical Trials', 'GitHub', 'Patents', 'arXiv', 'bioRxiv', 'medRxiv'];
+
+  const toggleSource = (source: string) => {
+    if (selectedSources.includes(source)) {
+      setSelectedSources(selectedSources.filter(s => s !== source));
+    } else {
+      setSelectedSources([...selectedSources, source]);
+    }
+  };
 
   return (
     <div className="p-4">
@@ -642,12 +822,15 @@ function CustomFeedsScreen({ onBack, showToast }: { onBack: () => void, showToas
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider mb-2 opacity-80">Data Sources</label>
             <div className="flex flex-wrap gap-2">
-              {sources.map((source, i) => (
-                <span key={source} className={`px-3 py-1.5 rounded-full text-xs font-bold ${i === 0 ? 'bg-white text-primary' : 'bg-white/20 text-white'}`}>
+              {sources.map((source) => (
+                <button 
+                  key={source} 
+                  onClick={() => toggleSource(source)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${selectedSources.includes(source) ? 'bg-white text-primary' : 'bg-white/20 text-white hover:bg-white/30'}`}
+                >
                   {source}
-                </span>
+                </button>
               ))}
-              <span className="px-3 py-1.5 bg-white/20 text-white text-xs font-bold rounded-full">+4 more</span>
             </div>
           </div>
 
@@ -775,13 +958,14 @@ function PreprintCard({ preprint, onClick, onToggleSave, onTagClick, onAuthorCli
   );
 }
 
-function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPreprintClick, onTagClick, onAuthorClick }: { 
+function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPreprintClick, onTagClick, onAuthorClick, showToast }: { 
   onCollectionClick: (c: Collection) => void, 
   savedPreprints: Preprint[], 
   onToggleSave: (p: Preprint) => void,
   onPreprintClick: (p: Preprint) => void,
   onTagClick: (tag: string) => void,
-  onAuthorClick: (author: string) => void
+  onAuthorClick: (author: string) => void,
+  showToast: (msg: string) => void
 }) {
   const [activeTab, setActiveTab] = useState<'saved' | 'collections'>('saved');
   const [collectionSort, setCollectionSort] = useState<'name' | 'paperCount' | 'updatedAt'>('updatedAt');
@@ -807,8 +991,11 @@ function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPrep
     });
 
   const handleCreate = () => {
-    // In a real app, this would save to a database
-    console.log('Creating collection:', newCollection);
+    if (!newCollection.name.trim()) {
+      showToast('Please enter a collection name');
+      return;
+    }
+    showToast(`Collection "${newCollection.name}" created!`);
     setIsCreating(false);
     setNewCollection({ name: '', description: '', imageUrl: '' });
   };
@@ -847,8 +1034,18 @@ function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPrep
         {activeTab === 'saved' ? (
           <div className="space-y-4">
             <div className="flex gap-2 overflow-x-auto no-scrollbar mb-4">
-              <button className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1 whitespace-nowrap">Recently Saved <ChevronRight className="size-4 rotate-90" /></button>
-              <button className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1 whitespace-nowrap">Highest Rated <ChevronRight className="size-4 rotate-90" /></button>
+              <button 
+                onClick={() => showToast('Sorting by Recently Saved')}
+                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1 whitespace-nowrap"
+              >
+                Recently Saved <ChevronRight className="size-4 rotate-90" />
+              </button>
+              <button 
+                onClick={() => showToast('Sorting by Highest Rated')}
+                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1 whitespace-nowrap"
+              >
+                Highest Rated <ChevronRight className="size-4 rotate-90" />
+              </button>
             </div>
             {filteredSaved.length > 0 ? (
               filteredSaved.map(p => (
@@ -1015,14 +1212,15 @@ function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPrep
   );
 }
 
-function CollectionDetailScreen({ collection, onBack, savedPreprints, onToggleSave, onPreprintClick, onTagClick, onAuthorClick }: { 
+function CollectionDetailScreen({ collection, onBack, savedPreprints, onToggleSave, onPreprintClick, onTagClick, onAuthorClick, showToast }: { 
   collection: Collection, 
   onBack: () => void, 
   savedPreprints: Preprint[], 
   onToggleSave: (p: Preprint) => void,
   onPreprintClick: (p: Preprint) => void,
   onTagClick: (tag: string) => void,
-  onAuthorClick: (author: string) => void
+  onAuthorClick: (author: string) => void,
+  showToast: (msg: string) => void
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState({ 
@@ -1032,8 +1230,11 @@ function CollectionDetailScreen({ collection, onBack, savedPreprints, onToggleSa
   });
 
   const handleSave = () => {
-    // In a real app, this would save to a database
-    console.log('Saving collection:', editData);
+    if (!editData.name.trim()) {
+      showToast('Collection name cannot be empty');
+      return;
+    }
+    showToast(`Collection "${editData.name}" updated!`);
     setIsEditing(false);
   };
 
@@ -1062,7 +1263,7 @@ function CollectionDetailScreen({ collection, onBack, savedPreprints, onToggleSa
               )}
             </div>
           </div>
-          <Share2 className="text-primary cursor-pointer" />
+          <Share2 className="text-primary cursor-pointer" onClick={() => showToast('Collection link copied to clipboard!')} />
         </div>
         
         {collection.description && (
@@ -1072,8 +1273,18 @@ function CollectionDetailScreen({ collection, onBack, savedPreprints, onToggleSa
         )}
 
         <div className="flex gap-2 overflow-x-auto no-scrollbar">
-          <button className="bg-primary text-white px-4 py-1.5 rounded-lg text-sm font-medium">All Papers</button>
-          <button className="bg-slate-100 dark:bg-slate-800 px-4 py-1.5 rounded-lg text-sm font-medium">Recently Added</button>
+          <button 
+            onClick={() => showToast('Showing all papers in collection')}
+            className="bg-primary text-white px-4 py-1.5 rounded-lg text-sm font-medium"
+          >
+            All Papers
+          </button>
+          <button 
+            onClick={() => showToast('Showing recently added papers')}
+            className="bg-slate-100 dark:bg-slate-800 px-4 py-1.5 rounded-lg text-sm font-medium"
+          >
+            Recently Added
+          </button>
         </div>
       </div>
       
@@ -1179,15 +1390,27 @@ function CollectionDetailScreen({ collection, onBack, savedPreprints, onToggleSa
   );
 }
 
-function ReaderScreen({ preprint, onToggleSave, isSaved, onRate, onTagClick, onAuthorClick }: { 
+function ReaderScreen({ preprint, onToggleSave, isSaved, onRate, onTagClick, onAuthorClick, showToast, onCite }: { 
   preprint: Preprint, 
   onToggleSave: (p: Preprint) => void, 
   isSaved: boolean,
   onRate: (rating: number) => void,
   onTagClick: (tag: string) => void,
-  onAuthorClick: (author: string) => void
+  onAuthorClick: (author: string) => void,
+  showToast: (msg: string) => void,
+  onCite: () => void
 }) {
   const [readerTheme, setReaderTheme] = useState<'light' | 'dark' | 'sepia'>('light');
+
+  const handleRateWithToast = (rating: number) => {
+    onRate(rating);
+    showToast(`You rated this paper ${rating} stars!`);
+  };
+
+  const handleToggleSaveWithToast = () => {
+    onToggleSave(preprint);
+    showToast(isSaved ? 'Removed from library' : 'Saved to library for offline reading');
+  };
 
   const themeClasses = {
     light: 'bg-white text-slate-900',
@@ -1226,12 +1449,21 @@ function ReaderScreen({ preprint, onToggleSave, isSaved, onRate, onTagClick, onA
             <Moon className="size-4" />
           </button>
         </div>
-        <button 
-          onClick={() => onToggleSave(preprint)}
-          className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors"
-        >
-          <Bookmark className={`size-6 ${isSaved ? 'text-primary fill-current' : 'text-slate-400'}`} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={onCite}
+            className="flex items-center gap-1 px-3 py-1.5 bg-primary/10 text-primary rounded-lg text-xs font-bold hover:bg-primary/20 transition-colors"
+          >
+            <Quote className="size-3" />
+            Cite
+          </button>
+          <button 
+            onClick={handleToggleSaveWithToast}
+            className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors"
+          >
+            <Bookmark className={`size-6 ${isSaved ? 'text-primary fill-current' : 'text-slate-400'}`} />
+          </button>
+        </div>
       </div>
 
       <article className="p-4 md:p-8 max-w-3xl mx-auto overflow-y-auto no-scrollbar">
@@ -1284,7 +1516,7 @@ function ReaderScreen({ preprint, onToggleSave, isSaved, onRate, onTagClick, onA
             {[1, 2, 3, 4, 5].map((star) => (
               <Zap 
                 key={star} 
-                onClick={() => onRate(star)}
+                onClick={() => handleRateWithToast(star)}
                 className={`size-6 cursor-pointer transition-all hover:scale-110 ${star <= (preprint.userRating || 0) ? 'text-amber-400 fill-amber-400' : 'text-slate-300'}`} 
               />
             ))}
@@ -1315,9 +1547,13 @@ function ReaderScreen({ preprint, onToggleSave, isSaved, onRate, onTagClick, onA
   );
 }
 
-function ProfileScreen({ onEdit, onSettings, preprints }: { onEdit: () => void, onSettings: () => void, preprints: Preprint[] }) {
+function ProfileScreen({ onEdit, onSettings, preprints, showToast }: { onEdit: () => void, onSettings: () => void, preprints: Preprint[], showToast: (msg: string) => void }) {
   const [isEditingPublications, setIsEditingPublications] = useState(false);
   const userPublications = preprints.filter(p => p.authors.some(a => a.includes('Aris Thorne')));
+
+  const handleRemovePublication = (title: string) => {
+    showToast(`Removed "${title}" from your profile.`);
+  };
 
   return (
     <div className="flex flex-col h-full p-6 pb-24 overflow-y-auto no-scrollbar">
@@ -1386,7 +1622,10 @@ function ProfileScreen({ onEdit, onSettings, preprints }: { onEdit: () => void, 
                 <p className="text-[10px] text-slate-500">{p.date} • {p.source}</p>
               </div>
               {isEditingPublications && (
-                <button className="p-1 text-red-500 hover:bg-red-50 rounded">
+                <button 
+                  onClick={() => handleRemovePublication(p.title)}
+                  className="p-1 text-red-500 hover:bg-red-50 rounded"
+                >
                   <X className="size-4" />
                 </button>
               )}
@@ -1571,7 +1810,7 @@ function UserProfileScreen({ user, onBack, onPreprintClick, onToggleSave, onTagC
   );
 }
 
-function TagResultsScreen({ tag, onBack, preprints, onPreprintClick, onToggleSave, savedPreprints, onTagClick, onAuthorClick }: { 
+function TagResultsScreen({ tag, onBack, preprints, onPreprintClick, onToggleSave, savedPreprints, onTagClick, onAuthorClick, showToast }: { 
   tag: string, 
   onBack: () => void, 
   preprints: Preprint[], 
@@ -1579,7 +1818,8 @@ function TagResultsScreen({ tag, onBack, preprints, onPreprintClick, onToggleSav
   onToggleSave: (p: Preprint) => void,
   savedPreprints: Preprint[],
   onTagClick: (tag: string) => void,
-  onAuthorClick: (author: string) => void
+  onAuthorClick: (author: string) => void,
+  showToast: (msg: string) => void
 }) {
   const filteredPreprints = preprints.filter(p => p.tags.includes(tag));
 
@@ -1612,6 +1852,77 @@ function TagResultsScreen({ tag, onBack, preprints, onPreprintClick, onToggleSav
   );
 }
 
+function CitationModal({ preprint, onClose, showToast }: { preprint: Preprint, onClose: () => void, showToast: (msg: string) => void }) {
+  const [style, setStyle] = useState<'APA' | 'MLA' | 'Chicago' | 'BibTeX'>('APA');
+
+  const generateCitation = () => {
+    const authors = preprint.authors.join(', ');
+    const year = preprint.date.split(', ')[1] || '2023';
+    const title = preprint.title;
+    const source = preprint.source;
+
+    switch (style) {
+      case 'APA':
+        return `${authors}. (${year}). ${title}. ${source}.`;
+      case 'MLA':
+        return `${authors}. "${title}." ${source}, ${year}.`;
+      case 'Chicago':
+        return `${authors}. "${title}." ${source} (${year}).`;
+      case 'BibTeX':
+        return `@article{preprint${preprint.id},\n  author = {${preprint.authors.join(' and ')}},\n  title = {${title}},\n  journal = {${source}},\n  year = {${year}}\n}`;
+      default:
+        return '';
+    }
+  };
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(generateCitation());
+    showToast(`Citation copied in ${style} style!`);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl"
+      >
+        <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <h3 className="text-xl font-bold">Generate Citation</h3>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full">
+            <X className="size-5" />
+          </button>
+        </div>
+        <div className="p-6 space-y-6">
+          <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+            {(['APA', 'MLA', 'Chicago', 'BibTeX'] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => setStyle(s)}
+                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${style === s ? 'bg-white dark:bg-slate-700 shadow-sm text-primary' : 'text-slate-500'}`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+          <div className="bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 min-h-[120px] flex items-center justify-center">
+            <p className="text-sm font-mono leading-relaxed text-center">
+              {generateCitation()}
+            </p>
+          </div>
+          <button 
+            onClick={copyToClipboard}
+            className="w-full bg-primary text-white font-bold py-4 rounded-xl shadow-lg shadow-primary/20 flex items-center justify-center gap-2"
+          >
+            <Copy className="size-5" />
+            Copy to Clipboard
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function Input({ label, value }: { label: string, value: string }) {
   return (
     <div className="flex flex-col gap-2">
@@ -1621,7 +1932,7 @@ function Input({ label, value }: { label: string, value: string }) {
   );
 }
 
-function NotificationsScreen({ onDailyDigest, onWeeklyDigest, onBack }: { onDailyDigest: () => void, onWeeklyDigest: () => void, onBack: () => void }) {
+function NotificationsScreen({ onDailyDigest, onWeeklyDigest, onBack, showToast }: { onDailyDigest: () => void, onWeeklyDigest: () => void, onBack: () => void, showToast: (msg: string) => void }) {
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950">
       <header className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between sticky top-0 bg-white dark:bg-slate-950 z-20">
@@ -1629,7 +1940,12 @@ function NotificationsScreen({ onDailyDigest, onWeeklyDigest, onBack }: { onDail
           <ArrowLeft className="cursor-pointer" onClick={onBack} />
           <h2 className="text-xl font-bold">Notifications</h2>
         </div>
-        <button className="text-primary font-bold text-sm">Mark all</button>
+        <button 
+          onClick={() => showToast('All notifications marked as read')}
+          className="text-primary font-bold text-sm"
+        >
+          Mark all
+        </button>
       </header>
 
       <div className="flex border-b border-slate-100 dark:border-slate-800">
@@ -1708,8 +2024,15 @@ function NotificationItem({ notification }: { notification: Notification, key?: 
   );
 }
 
-function TrendsScreen({ onTopicClick }: { onTopicClick: () => void }) {
+function TrendsScreen({ onTopicClick, showToast }: { onTopicClick: () => void, showToast: (msg: string) => void }) {
   const [searchQuery, setSearchQuery] = useState('');
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchQuery.trim()) {
+      showToast(`Searching trends for: ${searchQuery}`);
+    }
+  };
 
   const filteredMetrics = MOCK_TREND_METRICS.filter(m => 
     m.label.toLowerCase().includes(searchQuery.toLowerCase())
@@ -1728,7 +2051,7 @@ function TrendsScreen({ onTopicClick }: { onTopicClick: () => void }) {
       </header>
 
       <div className="p-4 space-y-6 overflow-y-auto no-scrollbar">
-        <div className="relative">
+        <form onSubmit={handleSearch} className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 size-4" />
           <input 
             type="text" 
@@ -1740,13 +2063,19 @@ function TrendsScreen({ onTopicClick }: { onTopicClick: () => void }) {
           <div className="absolute right-3 top-1/2 -translate-y-1/2 hidden md:flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-white dark:bg-slate-700 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-600">
             CMD + K
           </div>
-        </div>
+        </form>
 
         <div className="flex gap-2 overflow-x-auto no-scrollbar">
-          <button className="bg-primary text-white px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 whitespace-nowrap">
+          <button 
+            onClick={() => showToast('Removed "Quantum Computing" from filters')}
+            className="bg-primary text-white px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 whitespace-nowrap"
+          >
             Quantum Computing <X className="size-3" />
           </button>
-          <button className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap">
+          <button 
+            onClick={() => showToast('Added "Neural Networks" to filters')}
+            className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap"
+          >
             Neural Networks
           </button>
         </div>
@@ -1893,7 +2222,7 @@ function MetricCard({ label, value, change, icon }: { label: string, value: stri
   );
 }
 
-function DailyDigestScreen({ onBack }: { onBack: () => void }) {
+function DailyDigestScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
   return (
     <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-y-auto">
       <header className="p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
@@ -1914,7 +2243,10 @@ function DailyDigestScreen({ onBack }: { onBack: () => void }) {
         <div>
           <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-4">At a Glance</h3>
           <div className="grid grid-cols-2 gap-4">
-            <div className="bg-blue-50 dark:bg-blue-900/20 p-6 rounded-2xl border border-blue-100 dark:border-blue-900/30">
+            <div 
+              onClick={() => showToast('Showing new matches for you')}
+              className="bg-blue-50 dark:bg-blue-900/20 p-6 rounded-2xl border border-blue-100 dark:border-blue-900/30 cursor-pointer"
+            >
               <div className="flex items-center gap-2 text-primary mb-4">
                 <Zap className="size-4" />
                 <span className="text-[10px] font-bold uppercase">New Matches</span>
@@ -1922,7 +2254,10 @@ function DailyDigestScreen({ onBack }: { onBack: () => void }) {
               <p className="text-4xl font-bold mb-1">12</p>
               <p className="text-[10px] text-slate-500 leading-tight">Based on your interests</p>
             </div>
-            <div className="bg-slate-100 dark:bg-slate-800 p-6 rounded-2xl border border-slate-200 dark:border-slate-700">
+            <div 
+              onClick={() => showToast('Showing recent citations')}
+              className="bg-slate-100 dark:bg-slate-800 p-6 rounded-2xl border border-slate-200 dark:border-slate-700 cursor-pointer"
+            >
               <div className="flex items-center gap-2 text-primary mb-4">
                 <Quote className="size-4" />
                 <span className="text-[10px] font-bold uppercase">Citations Found</span>
@@ -1940,7 +2275,12 @@ function DailyDigestScreen({ onBack }: { onBack: () => void }) {
                 {topic === 'Quantum Computing' ? <Zap className="size-5 text-primary" /> : <TrendingUp className="size-5 text-primary" />}
                 <h3 className="text-lg font-bold">{topic}</h3>
               </div>
-              <button className="text-xs font-bold text-primary">See all</button>
+              <button 
+                onClick={() => showToast(`Showing all ${topic} papers`)}
+                className="text-xs font-bold text-primary"
+              >
+                See all
+              </button>
             </div>
             <div className="space-y-8">
               {MOCK_DIGEST_PAPERS.filter(p => p.topic === topic).map(paper => (
@@ -1949,7 +2289,10 @@ function DailyDigestScreen({ onBack }: { onBack: () => void }) {
                     <h4 className="text-lg font-bold leading-tight mb-1">{paper.title}</h4>
                     <p className="text-xs text-slate-500 italic">{paper.authors} • Published in {paper.source}</p>
                   </div>
-                  <button className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-lg shadow-primary/20">
+                  <button 
+                    onClick={() => showToast(`Opening abstract for "${paper.title}"`)}
+                    className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-lg shadow-primary/20"
+                  >
                     View Abstract <ExternalLink className="size-3" />
                   </button>
                   <img src={paper.imageUrl} alt="" className="w-full aspect-video rounded-2xl object-cover shadow-xl" />
@@ -2000,7 +2343,7 @@ function DailyDigestScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-function WeeklyDigestScreen({ onBack }: { onBack: () => void }) {
+function WeeklyDigestScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
   return (
     <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-y-auto">
       <header className="p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
@@ -2011,7 +2354,10 @@ function WeeklyDigestScreen({ onBack }: { onBack: () => void }) {
           </div>
           <h2 className="text-xl font-bold">Weekly Digest</h2>
         </div>
-        <Share2 className="size-5 text-slate-400" />
+        <Share2 
+          className="size-5 text-slate-400 cursor-pointer" 
+          onClick={() => showToast('Weekly digest link copied to clipboard!')}
+        />
       </header>
 
       <div className="p-6 space-y-8">
@@ -2391,7 +2737,7 @@ function ShareScreen({ onBack, showToast }: { onBack: () => void, showToast: (ms
   );
 }
 
-function SettingsScreen({ onBack, onNavigate }: { onBack: () => void, onNavigate: (s: Screen) => void }) {
+function SettingsScreen({ onBack, onNavigate, showToast }: { onBack: () => void, onNavigate: (s: Screen) => void, showToast: (msg: string) => void }) {
   const [activeTab, setActiveTab] = useState<'notifications' | 'security'>('notifications');
   const [settings, setSettings] = useState({
     pushEnabled: true,
@@ -2405,7 +2751,12 @@ function SettingsScreen({ onBack, onNavigate }: { onBack: () => void, onNavigate
   });
 
   const toggleSetting = (key: keyof typeof settings) => {
-    setSettings(prev => ({ ...prev, [key]: !prev[key] }));
+    setSettings(prev => {
+      const newValue = !prev[key];
+      const settingName = String(key).replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+      showToast(`${settingName} ${newValue ? 'enabled' : 'disabled'}`);
+      return { ...prev, [key]: newValue };
+    });
   };
 
   return (
@@ -2566,13 +2917,13 @@ function SettingsScreen({ onBack, onNavigate }: { onBack: () => void, onNavigate
                   icon={<Lock className="size-5" />}
                   title="Encryption Keys"
                   description="Manage your end-to-end encryption settings"
-                  onClick={() => {}}
+                  onClick={() => showToast('Encryption key management coming soon!')}
                 />
                 <SecurityOption 
                   icon={<Smartphone className="size-5" />}
                   title="Trusted Devices"
                   description="Manage devices that can access your lab results"
-                  onClick={() => {}}
+                  onClick={() => showToast('Trusted devices management coming soon!')}
                   showDivider={false}
                 />
               </div>
@@ -2649,10 +3000,15 @@ function SecurityOption({ icon, title, description, onClick, showDivider = true 
   );
 }
 
-function ChangePasswordScreen({ onBack }: { onBack: () => void }) {
+function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+
+  const handleUpdate = () => {
+    showToast('Password updated successfully!');
+    onBack();
+  };
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950">
@@ -2724,7 +3080,12 @@ function ChangePasswordScreen({ onBack }: { onBack: () => void }) {
         </div>
 
         <div className="mt-10 space-y-3">
-          <button className="w-full bg-primary text-white py-4 rounded-xl font-bold shadow-lg shadow-primary/20">Update Password</button>
+          <button 
+            onClick={handleUpdate}
+            className="w-full bg-primary text-white py-4 rounded-xl font-bold shadow-lg shadow-primary/20"
+          >
+            Update Password
+          </button>
           <button onClick={onBack} className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 py-4 rounded-xl font-bold">Cancel</button>
         </div>
 
@@ -2739,8 +3100,13 @@ function ChangePasswordScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-function TwoFactorAuthScreen({ onBack, onNext }: { onBack: () => void, onNext: () => void }) {
+function TwoFactorAuthScreen({ onBack, onNext, showToast }: { onBack: () => void, onNext: () => void, showToast: (msg: string) => void }) {
   const [step, setStep] = useState<'intro' | 'setup'>('intro');
+
+  const handleVerify = () => {
+    showToast('2FA code verified!');
+    onNext();
+  };
 
   if (step === 'intro') {
     return (
@@ -2865,7 +3231,7 @@ function TwoFactorAuthScreen({ onBack, onNext }: { onBack: () => void, onNext: (
           <span className="text-sm text-slate-600 dark:text-slate-300">Remember this device for 30 days</span>
         </div>
 
-        <button onClick={onNext} className="w-full bg-primary text-white py-4 rounded-xl font-bold shadow-lg shadow-primary/20 flex items-center justify-center gap-2">
+        <button onClick={handleVerify} className="w-full bg-primary text-white py-4 rounded-xl font-bold shadow-lg shadow-primary/20 flex items-center justify-center gap-2">
           Verify and Activate <ShieldCheck className="size-5" />
         </button>
 
@@ -2880,7 +3246,7 @@ function TwoFactorAuthScreen({ onBack, onNext }: { onBack: () => void, onNext: (
   );
 }
 
-function TwoFactorBackupCodesScreen({ onBack, onDone }: { onBack: () => void, onDone: () => void }) {
+function TwoFactorBackupCodesScreen({ onBack, onDone, showToast }: { onBack: () => void, onDone: () => void, showToast: (msg: string) => void }) {
   const codes = [
     '4829-1034',
     '9283-4712',
@@ -2889,6 +3255,14 @@ function TwoFactorBackupCodesScreen({ onBack, onDone }: { onBack: () => void, on
     '3341-8827',
     '7710-2293'
   ];
+
+  const handleCopy = () => {
+    showToast('Backup codes copied to clipboard!');
+  };
+
+  const handleDownload = () => {
+    showToast('Downloading backup codes...');
+  };
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950">
@@ -2943,7 +3317,7 @@ function TwoFactorBackupCodesScreen({ onBack, onDone }: { onBack: () => void, on
   );
 }
 
-function SecurityLogScreen({ onBack }: { onBack: () => void }) {
+function SecurityLogScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
   const logs = [
     { id: 1, type: 'login', title: 'Logged in', device: 'Chrome on Windows', location: 'New York, USA', time: 'Today at 10:45 AM', current: true },
     { id: 2, type: 'password', title: 'Password Changed', device: 'Safari on iPhone', location: 'London, UK', time: 'Oct 22, 2023 at 02:15 PM' },
@@ -2984,7 +3358,11 @@ function SecurityLogScreen({ onBack }: { onBack: () => void }) {
           
           <div className="space-y-6">
             {logs.map(log => (
-              <div key={log.id} className="flex items-start gap-4 group cursor-pointer">
+              <div 
+                key={log.id} 
+                onClick={() => showToast(`Viewing details for: ${log.title}`)}
+                className="flex items-start gap-4 group cursor-pointer"
+              >
                 <div className={`size-12 rounded-xl flex items-center justify-center shrink-0 ${getIconBg(log.type)}`}>
                   {getIcon(log.type)}
                 </div>
@@ -3005,7 +3383,10 @@ function SecurityLogScreen({ onBack }: { onBack: () => void }) {
           </div>
 
           <div className="mt-10 space-y-6">
-            <button className="w-full flex items-center justify-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 py-4 rounded-2xl font-bold text-slate-700 dark:text-slate-200 shadow-sm">
+            <button 
+              onClick={() => showToast('Signed out of all other sessions')}
+              className="w-full flex items-center justify-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 py-4 rounded-2xl font-bold text-slate-700 dark:text-slate-200 shadow-sm"
+            >
               <LogOut className="size-5" /> Sign Out of All Sessions
             </button>
             <p className="text-center text-xs text-slate-400 px-10">
@@ -3014,7 +3395,7 @@ function SecurityLogScreen({ onBack }: { onBack: () => void }) {
 
             <div className="bg-slate-50 dark:bg-slate-900 rounded-2xl p-6 border border-dashed border-slate-200 dark:border-slate-700 text-center">
               <p className="text-sm text-slate-500">
-                Don't recognize an activity? <button className="text-primary font-bold">Secure your account</button>
+                Don't recognize an activity? <button onClick={() => showToast('Security check initiated')} className="text-primary font-bold">Secure your account</button>
               </p>
             </div>
           </div>

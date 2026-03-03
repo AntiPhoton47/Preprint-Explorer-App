@@ -12,6 +12,7 @@ export interface Preprint {
   userRating?: number;
   views?: number;
   savesCount?: number;
+  type?: 'Preprint' | 'Peer-Reviewed' | 'Conference Paper';
 }
 
 export interface User {

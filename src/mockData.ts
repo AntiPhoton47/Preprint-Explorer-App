@@ -11,7 +11,8 @@ export const MOCK_PREPRINTS: Preprint[] = [
     abstract: 'This study explores the underlying mechanisms of neural adaptation in the prefrontal cortex during high-level cognitive tasks...',
     isSaved: false,
     citations: 142,
-    savesCount: 85
+    savesCount: 85,
+    type: 'Preprint'
   },
   {
     id: '2',
@@ -23,7 +24,8 @@ export const MOCK_PREPRINTS: Preprint[] = [
     abstract: 'We observed significant variance in connectivity patterns between control and experimental groups...',
     isSaved: true,
     citations: 89,
-    savesCount: 124
+    savesCount: 124,
+    type: 'Peer-Reviewed'
   },
   {
     id: '3',
@@ -35,7 +37,8 @@ export const MOCK_PREPRINTS: Preprint[] = [
     abstract: 'Data was processed using a custom Bayesian hierarchical model to account for individual baseline variations...',
     isSaved: false,
     citations: 215,
-    savesCount: 342
+    savesCount: 342,
+    type: 'Conference Paper'
   },
   {
     id: '4',
@@ -47,7 +50,8 @@ export const MOCK_PREPRINTS: Preprint[] = [
     abstract: 'Examining the trade-offs between decentralization and speed in modern consensus mechanisms...',
     isSaved: false,
     citations: 56,
-    savesCount: 12
+    savesCount: 12,
+    type: 'Preprint'
   },
   {
     id: '5',
@@ -59,7 +63,8 @@ export const MOCK_PREPRINTS: Preprint[] = [
     abstract: 'A comprehensive review of the latest convolutional neural network architectures applied to MRI and CT scan analysis...',
     isSaved: false,
     citations: 312,
-    savesCount: 156
+    savesCount: 156,
+    type: 'Peer-Reviewed'
   },
   {
     id: '6',
@@ -71,7 +76,8 @@ export const MOCK_PREPRINTS: Preprint[] = [
     abstract: 'This paper examines the moral status of synthetic entities through the lens of classical phenomenology...',
     isSaved: false,
     citations: 45,
-    savesCount: 8
+    savesCount: 8,
+    type: 'Conference Paper'
   },
   {
     id: '7',
@@ -83,7 +89,8 @@ export const MOCK_PREPRINTS: Preprint[] = [
     abstract: 'Synthesizing data from over 500 peer-reviewed studies to identify key drivers of the green transition...',
     isSaved: true,
     citations: 128,
-    savesCount: 210
+    savesCount: 210,
+    type: 'Peer-Reviewed'
   }
 ];
 
