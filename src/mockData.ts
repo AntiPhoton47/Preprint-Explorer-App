@@ -1,4 +1,4 @@
-import { Preprint, Collection, Notification, CustomFeed, TrendMetric, RisingStar, DigestPaper, DigestActivity } from './types';
+import { Preprint, Collection, Notification, CustomFeed, TrendMetric, RisingStar, DigestPaper, DigestActivity, User, Institution } from './types';
 
 export const MOCK_PREPRINTS: Preprint[] = [
   {
@@ -218,6 +218,116 @@ export const MOCK_DIGEST_PAPERS: DigestPaper[] = [
 export const MOCK_DIGEST_ACTIVITY: DigestActivity[] = [
   { id: 'a1', type: 'citation', text: '3 people cited your paper on', highlight: 'Adversarial Attacks.' },
   { id: 'a2', type: 'collaborator', text: 'New collaborator added to your project: Dr. Sarah Jenkins.' }
+];
+
+export const MOCK_INSTITUTIONS: Institution[] = [
+  {
+    id: 'uzh',
+    name: 'University of Zurich',
+    location: 'Zurich, Switzerland',
+    imageUrl: 'https://picsum.photos/seed/uzh/800/400',
+    description: 'A leading research university in Switzerland, known for its excellence in quantum physics and medicine.',
+    stats: {
+      researchers: 1240,
+      publications: 45000,
+      citations: 1200000
+    }
+  },
+  {
+    id: 'stanford',
+    name: 'Stanford University',
+    location: 'Stanford, CA, USA',
+    imageUrl: 'https://picsum.photos/seed/stanford/800/400',
+    description: 'One of the world\'s leading teaching and research institutions, located in Silicon Valley.',
+    stats: {
+      researchers: 2100,
+      publications: 85000,
+      citations: 3500000
+    }
+  },
+  {
+    id: 'mit',
+    name: 'MIT',
+    location: 'Cambridge, MA, USA',
+    imageUrl: 'https://picsum.photos/seed/mit/800/400',
+    description: 'The Massachusetts Institute of Technology is a world-class educational institution.',
+    stats: {
+      researchers: 1800,
+      publications: 72000,
+      citations: 2800000
+    }
+  }
+];
+
+export const MOCK_USERS: User[] = [
+  {
+    id: 'aris_thorne',
+    name: 'Dr. Aris Thorne',
+    email: 'aris.thorne@uzh.ch',
+    isEmailVerified: true,
+    isAffiliationVerified: true,
+    affiliation: 'University of Zurich',
+    institutionId: 'uzh',
+    imageUrl: 'https://picsum.photos/seed/profile/200/200',
+    bio: 'Specializing in Quantum Computing and Error Correction. My current work focuses on scalable fault-tolerant architectures.',
+    publications: ['1', '2'],
+    followers: 1240,
+    following: 482,
+    stats: {
+      preprints: 42,
+      citations: 1200,
+      followers: 1240,
+      hIndex: 18,
+      i10Index: 42,
+      totalPublications: 42
+    }
+  },
+  {
+    id: 'dr_smith',
+    name: 'Dr. Sarah Smith',
+    email: 's.smith@stanford.edu',
+    isEmailVerified: true,
+    isAffiliationVerified: true,
+    affiliation: 'Stanford University',
+    institutionId: 'stanford',
+    imageUrl: 'https://i.pravatar.cc/150?u=dr_smith',
+    bio: 'Leading researcher in neural networks and deep learning architectures.',
+    publications: ['1', '2'],
+    followers: 1240,
+    following: 180,
+    isFollowing: false,
+    stats: {
+      preprints: 42,
+      citations: 15600,
+      followers: 1240,
+      hIndex: 24,
+      i10Index: 38,
+      totalPublications: 56
+    }
+  },
+  {
+    id: 'prof_wilson',
+    name: 'Prof. James Wilson',
+    email: 'j.wilson@mit.edu',
+    isEmailVerified: true,
+    isAffiliationVerified: false,
+    affiliation: 'MIT',
+    institutionId: 'mit',
+    imageUrl: 'https://i.pravatar.cc/150?u=prof_wilson',
+    bio: 'Expert in hardware systems and distributed computing.',
+    publications: ['3'],
+    followers: 850,
+    following: 120,
+    isFollowing: true,
+    stats: {
+      preprints: 28,
+      citations: 8400,
+      followers: 850,
+      hIndex: 19,
+      i10Index: 31,
+      totalPublications: 35
+    }
+  }
 ];
 
 export const MOCK_PUBLICATION_VOLUME = [

@@ -49,7 +49,10 @@ import {
   QrCode,
   AlertTriangle,
   LogIn,
-  LogOut
+  LogOut,
+  Building2,
+  Mail,
+  CheckCircle2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -76,11 +79,14 @@ import {
   MOCK_DIGEST_PAPERS,
   MOCK_DIGEST_ACTIVITY,
   MOCK_PUBLICATION_VOLUME,
-  MOCK_WEEKLY_TRENDS
+  MOCK_WEEKLY_TRENDS,
+  MOCK_USERS,
+  MOCK_INSTITUTIONS
 } from './mockData';
 import { 
   Preprint, 
   User,
+  Institution,
   Collection, 
   Notification, 
   CustomFeed, 
@@ -92,14 +98,16 @@ import {
 
 import { storageService } from './services/storageService';
 
-type Screen = 'home' | 'library' | 'collections' | 'collection-detail' | 'reader' | 'profile' | 'notifications' | 'trends' | 'edit-profile' | 'share' | 'feeds' | 'notification-settings' | 'daily-digest' | 'weekly-digest' | 'topic-insight' | 'security-settings' | 'change-password' | '2fa-setup' | '2fa-backup' | 'security-log' | 'user-profile' | 'tag-results';
+type Screen = 'login' | 'register' | 'home' | 'library' | 'collections' | 'collection-detail' | 'reader' | 'profile' | 'notifications' | 'trends' | 'edit-profile' | 'share' | 'feeds' | 'notification-settings' | 'daily-digest' | 'weekly-digest' | 'topic-insight' | 'security-settings' | 'change-password' | '2fa-setup' | '2fa-backup' | 'security-log' | 'user-profile' | 'tag-results' | 'institution-detail';
 
 export default function App() {
-  const [currentScreen, setCurrentScreen] = useState<Screen>('home');
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [currentScreen, setCurrentScreen] = useState<Screen>('login');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPreprint, setSelectedPreprint] = useState<Preprint | null>(null);
   const [selectedCollection, setSelectedCollection] = useState<Collection | null>(null);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [selectedInstitution, setSelectedInstitution] = useState<Institution | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [savedPreprints, setSavedPreprints] = useState<Preprint[]>([]);
@@ -166,28 +174,41 @@ export default function App() {
   };
 
   const handleUserClick = (userId: string) => {
-    // In a real app, we'd fetch the user. For now, mock it.
-    const mockUser: User = {
-      id: userId,
-      name: userId === 'dr_smith' ? 'Dr. Sarah Smith' : 'Prof. James Wilson',
-      affiliation: userId === 'dr_smith' ? 'Stanford University' : 'MIT',
-      imageUrl: `https://i.pravatar.cc/150?u=${userId}`,
-      bio: 'Leading researcher in neural networks and deep learning architectures.',
-      publications: ['1', '2'],
-      followers: 1240,
-      following: 180,
-      isFollowing: false,
-      stats: {
-        preprints: 42,
-        citations: 15600,
-        followers: 1240,
-        hIndex: 24,
-        i10Index: 38,
-        totalPublications: 56
-      }
-    };
-    setSelectedUser(mockUser);
-    setCurrentScreen('user-profile');
+    const user = MOCK_USERS.find(u => u.id === userId || u.name === userId);
+    if (user) {
+      setSelectedUser(user);
+      setCurrentScreen('user-profile');
+    } else {
+      // Fallback for authors not in MOCK_USERS
+      const fallbackUser: User = {
+        id: userId,
+        name: userId,
+        affiliation: 'Independent Researcher',
+        imageUrl: `https://i.pravatar.cc/150?u=${userId}`,
+        bio: 'Academic researcher contributing to the global scientific community.',
+        publications: [],
+        followers: 150,
+        following: 80,
+        stats: {
+          preprints: 5,
+          citations: 240,
+          followers: 150,
+          hIndex: 4,
+          i10Index: 2,
+          totalPublications: 5
+        }
+      };
+      setSelectedUser(fallbackUser);
+      setCurrentScreen('user-profile');
+    }
+  };
+
+  const handleInstitutionClick = (institutionId: string) => {
+    const inst = MOCK_INSTITUTIONS.find(i => i.id === institutionId || i.name === institutionId);
+    if (inst) {
+      setSelectedInstitution(inst);
+      setCurrentScreen('institution-detail');
+    }
   };
 
   const handleRate = (preprintId: string, rating: number) => {
@@ -200,6 +221,13 @@ export default function App() {
   };
 
   const renderScreen = () => {
+    if (!isLoggedIn) {
+      if (currentScreen === 'register') {
+        return <RegisterScreen onBack={() => setCurrentScreen('login')} onRegister={() => { setIsLoggedIn(true); setCurrentScreen('home'); }} showToast={showToast} />;
+      }
+      return <LoginScreen onLogin={() => { setIsLoggedIn(true); setCurrentScreen('home'); }} onRegister={() => setCurrentScreen('register')} showToast={showToast} />;
+    }
+
     switch (currentScreen) {
       case 'home': return (
         <HomeScreen 
@@ -247,7 +275,7 @@ export default function App() {
           onCite={() => setIsCitationModalOpen(true)}
         />
       );
-      case 'profile': return <ProfileScreen onEdit={() => setCurrentScreen('edit-profile')} onSettings={() => setCurrentScreen('notification-settings')} preprints={allPreprints} showToast={showToast} />;
+      case 'profile': return <ProfileScreen onEdit={() => setCurrentScreen('edit-profile')} onSettings={() => setCurrentScreen('notification-settings')} onSignOut={() => { setIsLoggedIn(false); setCurrentScreen('login'); }} onInstitutionClick={handleInstitutionClick} preprints={allPreprints} showToast={showToast} />;
       case 'edit-profile': return <EditProfileScreen onBack={() => setCurrentScreen('profile')} showToast={showToast} />;
       case 'notification-settings': return <SettingsScreen onBack={() => setCurrentScreen('profile')} onNavigate={(s: Screen) => setCurrentScreen(s)} showToast={showToast} />;
       case 'change-password': return <ChangePasswordScreen onBack={() => setCurrentScreen('notification-settings')} showToast={showToast} />;
@@ -274,6 +302,7 @@ export default function App() {
           onPreprintClick={(p) => { setSelectedPreprint(p); setCurrentScreen('reader'); }} 
           onToggleSave={toggleSave}
           onTagClick={handleTagClick}
+          onInstitutionClick={handleInstitutionClick}
           savedPreprints={savedPreprints}
           showToast={showToast}
         />
@@ -288,6 +317,14 @@ export default function App() {
           savedPreprints={savedPreprints}
           onTagClick={handleTagClick}
           onAuthorClick={handleUserClick}
+          showToast={showToast}
+        />
+      );
+      case 'institution-detail': return (
+        <InstitutionDetailScreen 
+          institution={selectedInstitution!} 
+          onBack={() => setCurrentScreen('home')} 
+          onUserClick={handleUserClick}
           showToast={showToast}
         />
       );
@@ -757,6 +794,92 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
             <p className="text-sm text-slate-500">Try adjusting your search or filters</p>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function InstitutionDetailScreen({ institution, onBack, onUserClick, showToast }: { 
+  institution: Institution, 
+  onBack: () => void, 
+  onUserClick: (userId: string) => void,
+  showToast: (msg: string) => void 
+}) {
+  const affiliatedUsers = MOCK_USERS.filter(u => u.institutionId === institution.id || u.affiliation === institution.name);
+
+  return (
+    <div className="flex flex-col h-full bg-white dark:bg-slate-950">
+      <header className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-4 sticky top-0 bg-white dark:bg-slate-950 z-20">
+        <ArrowLeft className="cursor-pointer" onClick={onBack} />
+        <h2 className="text-lg font-bold truncate">{institution.name}</h2>
+      </header>
+
+      <div className="flex-1 overflow-y-auto no-scrollbar">
+        <div className="relative h-48">
+          <img src={institution.imageUrl} alt={institution.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-6">
+            <div className="flex items-center gap-4">
+              <div className="size-16 bg-white rounded-2xl flex items-center justify-center text-primary shadow-xl">
+                <Building2 className="size-10" />
+              </div>
+              <div className="text-white">
+                <h1 className="text-2xl font-bold">{institution.name}</h1>
+                <p className="text-sm opacity-90">{institution.location}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-6">
+          <div className="grid grid-cols-3 gap-4 mb-8">
+            <div className="text-center">
+              <p className="text-xl font-bold text-primary">{institution.stats.researchers.toLocaleString()}</p>
+              <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Researchers</p>
+            </div>
+            <div className="text-center">
+              <p className="text-xl font-bold text-primary">{institution.stats.publications.toLocaleString()}</p>
+              <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Publications</p>
+            </div>
+            <div className="text-center">
+              <p className="text-xl font-bold text-primary">{(institution.stats.citations / 1000000).toFixed(1)}M</p>
+              <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Citations</p>
+            </div>
+          </div>
+
+          <div className="mb-8">
+            <h3 className="text-xs font-bold uppercase text-slate-400 mb-3 tracking-widest">About Institution</h3>
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              {institution.description}
+            </p>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xs font-bold uppercase text-slate-400 tracking-widest">Affiliated Researchers</h3>
+              <span className="text-[10px] font-bold text-primary bg-primary/10 px-2 py-1 rounded-full">{affiliatedUsers.length} Found</span>
+            </div>
+            <div className="space-y-4">
+              {affiliatedUsers.map(user => (
+                <div 
+                  key={user.id} 
+                  onClick={() => onUserClick(user.id)}
+                  className="flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 cursor-pointer hover:border-primary/30 transition-all group"
+                >
+                  <img src={user.imageUrl} alt={user.name} className="size-12 rounded-full object-cover" />
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-bold group-hover:text-primary transition-colors">{user.name}</h4>
+                    <p className="text-[10px] text-slate-500 truncate">{user.bio}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs font-bold text-primary">{user.stats.citations.toLocaleString()}</p>
+                    <p className="text-[8px] uppercase font-bold text-slate-400">Cites</p>
+                  </div>
+                  <ChevronRight className="size-4 text-slate-300" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1547,22 +1670,39 @@ function ReaderScreen({ preprint, onToggleSave, isSaved, onRate, onTagClick, onA
   );
 }
 
-function ProfileScreen({ onEdit, onSettings, preprints, showToast }: { onEdit: () => void, onSettings: () => void, preprints: Preprint[], showToast: (msg: string) => void }) {
+function ProfileScreen({ onEdit, onSettings, onSignOut, onInstitutionClick, preprints, showToast }: { onEdit: () => void, onSettings: () => void, onSignOut: () => void, onInstitutionClick: (id: string) => void, preprints: Preprint[], showToast: (msg: string) => void }) {
   const [isEditingPublications, setIsEditingPublications] = useState(false);
+  const [isAddingNetwork, setIsAddingNetwork] = useState(false);
+  const [networkLinks, setNetworkLinks] = useState([
+    { icon: <Quote />, label: 'ORCID' },
+    { icon: <UserPlus />, label: 'LinkedIn' },
+    { icon: <Share2 />, label: 'Twitter' }
+  ]);
+  const [newNetworkLabel, setNewNetworkLabel] = useState('');
+
   const userPublications = preprints.filter(p => p.authors.some(a => a.includes('Aris Thorne')));
 
   const handleRemovePublication = (title: string) => {
     showToast(`Removed "${title}" from your profile.`);
   };
 
+  const handleAddNetwork = () => {
+    if (newNetworkLabel.trim()) {
+      setNetworkLinks([...networkLinks, { icon: <Compass />, label: newNetworkLabel.trim() }]);
+      setNewNetworkLabel('');
+      setIsAddingNetwork(false);
+      showToast(`Added ${newNetworkLabel} to your network.`);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full p-6 pb-24 overflow-y-auto no-scrollbar">
       <div className="flex flex-col items-center text-center mb-8">
-        <div className="relative mb-4">
+        <div className="relative mb-4 group cursor-pointer">
           <img 
             src="https://picsum.photos/seed/profile/200/200" 
             alt="Profile" 
-            className="size-32 rounded-full border-4 border-primary/10 object-cover"
+            className="size-32 rounded-full border-4 border-primary/10 object-cover group-hover:opacity-90 transition-opacity"
           />
           <div className="absolute bottom-1 right-1 bg-primary text-white p-1 rounded-full border-2 border-white dark:border-slate-900">
             <ShieldCheck className="size-4" />
@@ -1570,35 +1710,55 @@ function ProfileScreen({ onEdit, onSettings, preprints, showToast }: { onEdit: (
         </div>
         <h1 className="text-2xl font-bold">Dr. Aris Thorne</h1>
         <p className="text-primary font-medium text-sm">Department of Quantum Physics</p>
-        <p className="text-slate-500 text-sm">University of Zurich</p>
+        <button 
+          onClick={() => onInstitutionClick('uzh')}
+          className="text-slate-500 text-sm hover:text-primary hover:underline transition-colors flex items-center gap-1"
+        >
+          University of Zurich
+          <CheckCircle2 className="size-3 text-emerald-500" />
+        </button>
         <div className="flex gap-3 mt-6 w-full">
-          <button onClick={onEdit} className="flex-1 bg-primary text-white py-2.5 rounded-lg font-bold text-sm">Edit Profile</button>
-          <button onClick={onSettings} className="px-4 border border-slate-200 dark:border-slate-700 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2">
+          <button onClick={onEdit} className="flex-1 bg-primary text-white py-2.5 rounded-lg font-bold text-sm shadow-lg shadow-primary/20">Edit Profile</button>
+          <button onClick={onSettings} className="px-4 border border-slate-200 dark:border-slate-700 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
             <Settings className="size-4" />
             Settings
           </button>
         </div>
       </div>
 
-      <div className="flex gap-4 border-y border-slate-100 dark:border-slate-800 py-4 mb-8">
-        <div className="flex-1 text-center">
-          <p className="text-xl font-bold">{userPublications.length}</p>
-          <p className="text-[10px] uppercase font-semibold text-slate-500">Preprints</p>
+      <div className="grid grid-cols-2 gap-4 mb-8">
+        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center">
+          <p className="text-2xl font-bold text-primary">{userPublications.length}</p>
+          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Preprints</p>
         </div>
-        <div className="w-px bg-slate-200 dark:bg-slate-700"></div>
-        <div className="flex-1 text-center">
-          <p className="text-xl font-bold">1.2k</p>
-          <p className="text-[10px] uppercase font-semibold text-slate-500">Citations</p>
+        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center">
+          <p className="text-2xl font-bold text-primary">1.2k</p>
+          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Citations</p>
         </div>
-        <div className="w-px bg-slate-200 dark:bg-slate-700"></div>
-        <div className="flex-1 text-center">
-          <p className="text-xl font-bold">48</p>
-          <p className="text-[10px] uppercase font-semibold text-slate-500">Followers</p>
+        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center">
+          <p className="text-2xl font-bold text-primary">18</p>
+          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">h-index</p>
+        </div>
+        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center">
+          <p className="text-2xl font-bold text-primary">42</p>
+          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">i10-index</p>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-center gap-8 mb-8 text-center">
+        <div>
+          <p className="text-lg font-bold">1,240</p>
+          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Followers</p>
+        </div>
+        <div className="w-px h-8 bg-slate-200 dark:bg-slate-700"></div>
+        <div>
+          <p className="text-lg font-bold">482</p>
+          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Following</p>
         </div>
       </div>
 
       <div className="mb-8">
-        <h3 className="text-xs font-bold uppercase text-slate-400 mb-3">About Research</h3>
+        <h3 className="text-xs font-bold uppercase text-slate-400 mb-3 tracking-widest">About Research</h3>
         <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
           Specializing in <span className="text-primary font-medium">Quantum Computing</span> and <span className="text-primary font-medium">Error Correction</span>. My current work focuses on scalable fault-tolerant architectures.
         </p>
@@ -1606,7 +1766,7 @@ function ProfileScreen({ onEdit, onSettings, preprints, showToast }: { onEdit: (
 
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-xs font-bold uppercase text-slate-400">Publication History</h3>
+          <h3 className="text-xs font-bold uppercase text-slate-400 tracking-widest">Publication History</h3>
           <button 
             onClick={() => setIsEditingPublications(!isEditingPublications)}
             className="text-xs font-bold text-primary flex items-center gap-1"
@@ -1640,19 +1800,71 @@ function ProfileScreen({ onEdit, onSettings, preprints, showToast }: { onEdit: (
         </div>
       </div>
 
-      <div>
-        <h3 className="text-xs font-bold uppercase text-slate-400 mb-3">Academic Network</h3>
-        <div className="grid grid-cols-3 gap-3">
-          <SocialLink icon={<Quote />} label="ORCID" />
-          <SocialLink icon={<UserPlus />} label="LinkedIn" />
-          <SocialLink icon={<Share2 />} label="Twitter" />
+      <div className="mb-12">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xs font-bold uppercase text-slate-400 tracking-widest">Academic Network</h3>
+          <button 
+            onClick={() => setIsAddingNetwork(true)}
+            className="text-xs font-bold text-primary flex items-center gap-1"
+          >
+            <Plus className="size-3" /> Add
+          </button>
         </div>
+        
+        <div className="grid grid-cols-3 gap-3">
+          {networkLinks.map((link, i) => (
+            <SocialLink key={i} icon={link.icon} label={link.label} />
+          ))}
+        </div>
+
+        <AnimatePresence>
+          {isAddingNetwork && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              className="mt-4 p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700"
+            >
+              <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2">Network Name</label>
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  value={newNetworkLabel}
+                  onChange={(e) => setNewNetworkLabel(e.target.value)}
+                  placeholder="e.g. ResearchGate"
+                  className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-primary/50"
+                  autoFocus
+                />
+                <button 
+                  onClick={handleAddNetwork}
+                  className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold"
+                >
+                  Add
+                </button>
+                <button 
+                  onClick={() => setIsAddingNetwork(false)}
+                  className="text-slate-400 px-2"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
+
+      <button 
+        onClick={onSignOut}
+        className="w-full py-4 bg-red-50 dark:bg-red-900/10 text-red-500 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-red-100 transition-colors"
+      >
+        <LogOut className="size-5" />
+        Sign Out of Account
+      </button>
     </div>
   );
 }
 
-function SocialLink({ icon, label }: { icon: React.ReactNode, label: string }) {
+function SocialLink({ icon, label }: { icon: React.ReactNode, label: string, key?: any }) {
   return (
     <div className="flex flex-col items-center gap-2 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
       <div className="size-10 flex items-center justify-center rounded-full bg-white dark:bg-slate-700 shadow-sm text-primary">
@@ -1664,9 +1876,21 @@ function SocialLink({ icon, label }: { icon: React.ReactNode, label: string }) {
 }
 
 function EditProfileScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
+  const [email, setEmail] = useState('aris.thorne@uzh.ch');
+  const [isEmailVerified, setIsEmailVerified] = useState(true);
+  const [isAffiliationVerified, setIsAffiliationVerified] = useState(true);
+
   const handleSave = () => {
     showToast('Profile updated successfully!');
     onBack();
+  };
+
+  const handleVerifyEmail = () => {
+    showToast('Verification email sent to ' + email);
+  };
+
+  const handleVerifyAffiliation = () => {
+    showToast('Affiliation verification request submitted.');
   };
 
   return (
@@ -1678,7 +1902,7 @@ function EditProfileScreen({ onBack, showToast }: { onBack: () => void, showToas
         </div>
         <button onClick={handleSave} className="text-primary font-bold">Save</button>
       </header>
-      <div className="p-6 space-y-6">
+      <div className="p-6 space-y-6 overflow-y-auto no-scrollbar">
         <div className="flex flex-col items-center gap-4">
           <div className="relative">
             <img src="https://picsum.photos/seed/profile/200/200" alt="" className="size-32 rounded-full object-cover" />
@@ -1690,8 +1914,49 @@ function EditProfileScreen({ onBack, showToast }: { onBack: () => void, showToas
         </div>
         <div className="space-y-4">
           <Input label="Full Name" value="Dr. Aris Thorne" />
+          
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-semibold">Email Address</label>
+              {isEmailVerified ? (
+                <span className="text-[10px] font-bold text-emerald-500 flex items-center gap-1">
+                  <CheckCircle2 className="size-3" /> Verified
+                </span>
+              ) : (
+                <button onClick={handleVerifyEmail} className="text-[10px] font-bold text-primary hover:underline">Verify Now</button>
+              )}
+            </div>
+            <div className="relative">
+              <input 
+                type="email" 
+                value={email}
+                onChange={(e) => { setEmail(e.target.value); setIsEmailVerified(false); }}
+                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-primary/50"
+              />
+              <Mail className="absolute right-3 top-1/2 -translate-y-1/2 size-4 text-slate-400" />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-semibold">Academic Affiliation</label>
+              {isAffiliationVerified ? (
+                <span className="text-[10px] font-bold text-emerald-500 flex items-center gap-1">
+                  <CheckCircle2 className="size-3" /> Verified
+                </span>
+              ) : (
+                <button onClick={handleVerifyAffiliation} className="text-[10px] font-bold text-primary hover:underline">Verify Affiliation</button>
+              )}
+            </div>
+            <input 
+              type="text" 
+              defaultValue="University of Zurich"
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-primary/50"
+            />
+          </div>
+
           <Input label="Academic Title" value="Department of Quantum Physics" />
-          <Input label="University" value="University of Zurich" />
+          
           <div className="flex flex-col gap-2">
             <label className="text-sm font-semibold">Research Bio</label>
             <textarea className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 text-sm min-h-[100px]" defaultValue="Specializing in Quantum Computing and Error Correction..." />
@@ -1709,12 +1974,13 @@ function EditProfileScreen({ onBack, showToast }: { onBack: () => void, showToas
   );
 }
 
-function UserProfileScreen({ user, onBack, onPreprintClick, onToggleSave, onTagClick, savedPreprints, showToast }: { 
+function UserProfileScreen({ user, onBack, onPreprintClick, onToggleSave, onTagClick, onInstitutionClick, savedPreprints, showToast }: { 
   user: User, 
   onBack: () => void, 
   onPreprintClick: (p: Preprint) => void,
   onToggleSave: (p: Preprint) => void,
   onTagClick: (tag: string) => void,
+  onInstitutionClick: (id: string) => void,
   savedPreprints: Preprint[],
   showToast: (msg: string) => void
 }) {
@@ -1740,7 +2006,13 @@ function UserProfileScreen({ user, onBack, onPreprintClick, onToggleSave, onTagC
             className="size-32 rounded-full border-4 border-primary/10 object-cover mb-4"
           />
           <h1 className="text-2xl font-bold">{user.name}</h1>
-          <p className="text-primary font-medium text-sm">{user.affiliation}</p>
+          <button 
+            onClick={() => onInstitutionClick(user.institutionId || user.affiliation)}
+            className="text-primary font-medium text-sm hover:underline flex items-center gap-1"
+          >
+            {user.affiliation}
+            {user.isAffiliationVerified && <CheckCircle2 className="size-3 text-emerald-500" />}
+          </button>
           
           <div className="flex gap-3 mt-6 w-full">
             <button 
@@ -1758,25 +2030,30 @@ function UserProfileScreen({ user, onBack, onPreprintClick, onToggleSave, onTagC
           </div>
         </div>
 
-        <div className="flex gap-4 border-y border-slate-100 dark:border-slate-800 py-4 mb-8">
-          <div className="flex-1 text-center">
+        <div className="flex gap-4 border-y border-slate-100 dark:border-slate-800 py-4 mb-8 overflow-x-auto no-scrollbar">
+          <div className="flex-1 min-w-[60px] text-center">
             <p className="text-xl font-bold">{user.stats.totalPublications || user.stats.preprints}</p>
             <p className="text-[10px] uppercase font-semibold text-slate-500">Pubs</p>
           </div>
           <div className="w-px bg-slate-200 dark:bg-slate-700"></div>
-          <div className="flex-1 text-center">
+          <div className="flex-1 min-w-[60px] text-center">
+            <p className="text-xl font-bold">{user.stats.followers || user.followers}</p>
+            <p className="text-[10px] uppercase font-semibold text-slate-500">Followers</p>
+          </div>
+          <div className="w-px bg-slate-200 dark:bg-slate-700"></div>
+          <div className="flex-1 min-w-[60px] text-center">
             <p className="text-xl font-bold">{user.stats.hIndex || 0}</p>
             <p className="text-[10px] uppercase font-semibold text-slate-500">h-index</p>
           </div>
           <div className="w-px bg-slate-200 dark:bg-slate-700"></div>
-          <div className="flex-1 text-center">
+          <div className="flex-1 min-w-[60px] text-center">
             <p className="text-xl font-bold">{user.stats.i10Index || 0}</p>
             <p className="text-[10px] uppercase font-semibold text-slate-500">i10-index</p>
           </div>
           <div className="w-px bg-slate-200 dark:bg-slate-700"></div>
-          <div className="flex-1 text-center">
+          <div className="flex-1 min-w-[60px] text-center">
             <p className="text-xl font-bold">{(user.stats.citations / 1000).toFixed(1)}k</p>
-            <p className="text-[10px] uppercase font-semibold text-slate-500">Citations</p>
+            <p className="text-[10px] uppercase font-semibold text-slate-500">Cites</p>
           </div>
         </div>
 
@@ -1919,6 +2196,158 @@ function CitationModal({ preprint, onClose, showToast }: { preprint: Preprint, o
           </button>
         </div>
       </motion.div>
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin, onRegister, showToast }: { onLogin: () => void, onRegister: () => void, showToast: (msg: string) => void }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (email && password) {
+      onLogin();
+      showToast('Welcome back, Dr. Thorne!');
+    } else {
+      showToast('Please enter your credentials');
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full p-8 justify-center bg-white dark:bg-slate-950">
+      <div className="mb-12 text-center">
+        <div className="size-20 bg-primary rounded-3xl mx-auto mb-6 flex items-center justify-center text-white shadow-xl shadow-primary/20">
+          <BookOpen className="size-10" />
+        </div>
+        <h1 className="text-3xl font-bold mb-2">ResearchFlow</h1>
+        <p className="text-slate-500">The pulse of global research</p>
+      </div>
+
+      <form onSubmit={handleLogin} className="space-y-6">
+        <div className="space-y-2">
+          <label className="text-xs font-bold uppercase text-slate-400 tracking-widest">Email Address</label>
+          <input 
+            type="email" 
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+            placeholder="aris.thorne@uzh.ch"
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-xs font-bold uppercase text-slate-400 tracking-widest">Password</label>
+          <input 
+            type="password" 
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+            placeholder="••••••••"
+          />
+        </div>
+        <button 
+          type="submit"
+          className="w-full bg-primary text-white font-bold py-5 rounded-2xl shadow-xl shadow-primary/20 active:scale-95 transition-all"
+        >
+          Sign In
+        </button>
+      </form>
+
+      <div className="mt-12 text-center">
+        <p className="text-sm text-slate-500 mb-4">Don't have an account?</p>
+        <button 
+          onClick={onRegister}
+          className="text-primary font-bold hover:underline"
+        >
+          Create Academic Account
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RegisterScreen({ onBack, onRegister, showToast }: { onBack: () => void, onRegister: () => void, showToast: (msg: string) => void }) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [affiliation, setAffiliation] = useState('');
+  const [password, setPassword] = useState('');
+
+  const handleRegister = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (name && email && affiliation && password) {
+      onRegister();
+      showToast('Account created! Welcome to ResearchFlow.');
+    } else {
+      showToast('Please fill in all fields');
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-white dark:bg-slate-950">
+      <header className="p-6 flex items-center gap-4">
+        <ArrowLeft className="cursor-pointer" onClick={onBack} />
+        <h2 className="text-xl font-bold">Register</h2>
+      </header>
+
+      <div className="flex-1 p-8 overflow-y-auto no-scrollbar">
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold mb-2">Join the Network</h1>
+          <p className="text-sm text-slate-500">Connect with 2M+ researchers worldwide.</p>
+        </div>
+
+        <form onSubmit={handleRegister} className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase text-slate-400 tracking-widest">Full Name</label>
+            <input 
+              type="text" 
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+              placeholder="Dr. Aris Thorne"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase text-slate-400 tracking-widest">Email Address</label>
+            <input 
+              type="email" 
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+              placeholder="aris.thorne@uzh.ch"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase text-slate-400 tracking-widest">Affiliation</label>
+            <input 
+              type="text" 
+              value={affiliation}
+              onChange={(e) => setAffiliation(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+              placeholder="University of Zurich"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase text-slate-400 tracking-widest">Password</label>
+            <input 
+              type="password" 
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+              placeholder="••••••••"
+            />
+          </div>
+          <button 
+            type="submit"
+            className="w-full bg-primary text-white font-bold py-5 rounded-2xl shadow-xl shadow-primary/20 active:scale-95 transition-all mt-4"
+          >
+            Create Account
+          </button>
+        </form>
+
+        <p className="mt-8 text-[10px] text-slate-400 text-center leading-relaxed">
+          By registering, you agree to our <span className="underline">Terms of Service</span> and <span className="underline">Privacy Policy</span>.
+        </p>
+      </div>
     </div>
   );
 }

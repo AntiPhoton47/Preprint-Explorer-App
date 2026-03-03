@@ -18,7 +18,11 @@ export interface Preprint {
 export interface User {
   id: string;
   name: string;
+  email?: string;
+  isEmailVerified?: boolean;
+  isAffiliationVerified?: boolean;
   affiliation: string;
+  institutionId?: string;
   imageUrl: string;
   bio: string;
   publications: string[]; // IDs of preprints
@@ -32,6 +36,19 @@ export interface User {
     hIndex?: number;
     i10Index?: number;
     totalPublications?: number;
+  };
+}
+
+export interface Institution {
+  id: string;
+  name: string;
+  location: string;
+  imageUrl: string;
+  description: string;
+  stats: {
+    researchers: number;
+    publications: number;
+    citations: number;
   };
 }
 
