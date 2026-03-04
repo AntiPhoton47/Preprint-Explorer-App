@@ -1,3 +1,13 @@
+export interface PaperComment {
+  id: string;
+  userId: string;
+  userName: string;
+  userImageUrl: string;
+  text: string;
+  date: string;
+  likes: number;
+}
+
 export interface Preprint {
   id: string;
   title: string;
@@ -13,6 +23,11 @@ export interface Preprint {
   views?: number;
   savesCount?: number;
   type?: 'Preprint' | 'Peer-Reviewed' | 'Conference Paper';
+  comments?: PaperComment[];
+  citedBy?: string[]; // User IDs or Names
+  references?: string[]; // Paper IDs or Titles
+  savedBy?: string[]; // User IDs
+  ratedBy?: { userId: string, rating: number }[];
 }
 
 export interface User {

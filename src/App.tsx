@@ -48,11 +48,14 @@ import {
   Smartphone,
   QrCode,
   AlertTriangle,
+  BellOff,
+  List,
   LogIn,
   LogOut,
   Building2,
   Mail,
-  CheckCircle2
+  CheckCircle2,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -85,6 +88,7 @@ import {
 } from './mockData';
 import { 
   Preprint, 
+  PaperComment,
   User,
   Institution,
   Collection, 
@@ -98,17 +102,19 @@ import {
 
 import { storageService } from './services/storageService';
 
-type Screen = 'login' | 'register' | 'home' | 'library' | 'collections' | 'collection-detail' | 'reader' | 'profile' | 'notifications' | 'trends' | 'edit-profile' | 'share' | 'feeds' | 'notification-settings' | 'daily-digest' | 'weekly-digest' | 'topic-insight' | 'security-settings' | 'change-password' | '2fa-setup' | '2fa-backup' | 'security-log' | 'user-profile' | 'tag-results' | 'institution-detail';
+type Screen = 'login' | 'register' | 'home' | 'library' | 'collections' | 'collection-detail' | 'reader' | 'profile' | 'notifications' | 'trends' | 'edit-profile' | 'share' | 'feeds' | 'notification-settings' | 'daily-digest' | 'weekly-digest' | 'topic-insight' | 'security-settings' | 'change-password' | '2fa-setup' | '2fa-backup' | 'security-log' | 'user-profile' | 'tag-results' | 'institution-detail' | 'legal';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentScreen, setCurrentScreen] = useState<Screen>('login');
+  const [navigationHistory, setNavigationHistory] = useState<Screen[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPreprint, setSelectedPreprint] = useState<Preprint | null>(null);
   const [selectedCollection, setSelectedCollection] = useState<Collection | null>(null);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [selectedInstitution, setSelectedInstitution] = useState<Institution | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [legalType, setLegalType] = useState<'tos' | 'privacy'>('tos');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [savedPreprints, setSavedPreprints] = useState<Preprint[]>([]);
   const [allPreprints, setAllPreprints] = useState<Preprint[]>(MOCK_PREPRINTS);
@@ -120,6 +126,22 @@ export default function App() {
   const showToast = (message: string, type: 'success' | 'info' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const navigateTo = (screen: Screen) => {
+    setNavigationHistory(prev => [...prev, currentScreen]);
+    setCurrentScreen(screen);
+  };
+
+  const goBack = () => {
+    if (navigationHistory.length > 0) {
+      const prevScreen = navigationHistory[navigationHistory.length - 1];
+      setNavigationHistory(prev => prev.slice(0, -1));
+      setCurrentScreen(prevScreen);
+    } else {
+      // Default fallback if history is empty
+      setCurrentScreen('home');
+    }
   };
 
   useEffect(() => {
@@ -170,14 +192,14 @@ export default function App() {
 
   const handleTagClick = (tag: string) => {
     setSelectedTag(tag);
-    setCurrentScreen('tag-results');
+    navigateTo('tag-results');
   };
 
   const handleUserClick = (userId: string) => {
     const user = MOCK_USERS.find(u => u.id === userId || u.name === userId);
     if (user) {
       setSelectedUser(user);
-      setCurrentScreen('user-profile');
+      navigateTo('user-profile');
     } else {
       // Fallback for authors not in MOCK_USERS
       const fallbackUser: User = {
@@ -199,7 +221,7 @@ export default function App() {
         }
       };
       setSelectedUser(fallbackUser);
-      setCurrentScreen('user-profile');
+      navigateTo('user-profile');
     }
   };
 
@@ -207,7 +229,7 @@ export default function App() {
     const inst = MOCK_INSTITUTIONS.find(i => i.id === institutionId || i.name === institutionId);
     if (inst) {
       setSelectedInstitution(inst);
-      setCurrentScreen('institution-detail');
+      navigateTo('institution-detail');
     }
   };
 
@@ -220,10 +242,84 @@ export default function App() {
     }
   };
 
+  function LegalScreen({ type, onBack }: { type: 'tos' | 'privacy', onBack: () => void }) {
+    const content = type === 'tos' ? {
+      title: 'Terms of Service',
+      sections: [
+        {
+          title: '1. Acceptance of Terms',
+          body: 'By accessing or using ResearchFlow, you agree to be bound by these Terms of Service and all applicable laws and regulations.'
+        },
+        {
+          title: '2. User Accounts',
+          body: 'You are responsible for maintaining the confidentiality of your account and password. You must provide accurate and complete information when creating an account.'
+        },
+        {
+          title: '3. Intellectual Property',
+          body: 'All content on ResearchFlow, including text, graphics, logos, and software, is the property of ResearchFlow or its content suppliers and is protected by international copyright laws.'
+        },
+        {
+          title: '4. Prohibited Conduct',
+          body: 'You agree not to use ResearchFlow for any unlawful purpose or in any way that could damage, disable, or impair the service.'
+        }
+      ]
+    } : {
+      title: 'Privacy Policy',
+      sections: [
+        {
+          title: '1. Information We Collect',
+          body: 'We collect information you provide directly to us, such as when you create an account, update your profile, or use our services.'
+        },
+        {
+          title: '2. How We Use Your Information',
+          body: 'We use the information we collect to provide, maintain, and improve our services, and to communicate with you.'
+        },
+        {
+          title: '3. Data Sharing',
+          body: 'We do not share your personal information with third parties except as described in this Privacy Policy or with your consent.'
+        },
+        {
+          title: '4. Data Security',
+          body: 'We take reasonable measures to help protect your personal information from loss, theft, misuse, and unauthorized access.'
+        }
+      ]
+    };
+
+    return (
+      <div className="flex flex-col h-full bg-white dark:bg-slate-950">
+        <header className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center gap-4 sticky top-0 bg-white dark:bg-slate-950 z-20">
+          <ArrowLeft className="cursor-pointer" onClick={onBack} />
+          <h2 className="text-xl font-bold">{content.title}</h2>
+        </header>
+        <div className="flex-1 overflow-y-auto p-8 space-y-8 no-scrollbar">
+          <div className="prose dark:prose-invert max-w-none">
+            <p className="text-slate-500 mb-8">Last updated: October 24, 2023</p>
+            {content.sections.map((section, i) => (
+              <div key={i} className="mb-8">
+                <h3 className="text-lg font-bold mb-3">{section.title}</h3>
+                <p className="text-slate-600 dark:text-slate-400 leading-relaxed">{section.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const renderScreen = () => {
     if (!isLoggedIn) {
       if (currentScreen === 'register') {
-        return <RegisterScreen onBack={() => setCurrentScreen('login')} onRegister={() => { setIsLoggedIn(true); setCurrentScreen('home'); }} showToast={showToast} />;
+        return (
+          <RegisterScreen 
+            onBack={() => setCurrentScreen('login')} 
+            onRegister={() => { setIsLoggedIn(true); setCurrentScreen('home'); }} 
+            onLegal={(type) => { setLegalType(type); navigateTo('legal'); }}
+            showToast={showToast} 
+          />
+        );
+      }
+      if (currentScreen === 'legal') {
+        return <LegalScreen type={legalType} onBack={goBack} />;
       }
       return <LoginScreen onLogin={() => { setIsLoggedIn(true); setCurrentScreen('home'); }} onRegister={() => setCurrentScreen('register')} showToast={showToast} />;
     }
@@ -231,7 +327,7 @@ export default function App() {
     switch (currentScreen) {
       case 'home': return (
         <HomeScreen 
-          onPreprintClick={(p) => { setSelectedPreprint(p); setCurrentScreen('reader'); }} 
+          onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }} 
           savedPreprints={savedPreprints} 
           onToggleSave={toggleSave}
           searchQuery={searchQuery}
@@ -242,10 +338,10 @@ export default function App() {
       );
       case 'library': return (
         <LibraryScreen 
-          onCollectionClick={(c) => { setSelectedCollection(c); setCurrentScreen('collection-detail'); }} 
+          onCollectionClick={(c) => { setSelectedCollection(c); navigateTo('collection-detail'); }} 
           savedPreprints={savedPreprints} 
           onToggleSave={toggleSave} 
-          onPreprintClick={(p) => { setSelectedPreprint(p); setCurrentScreen('reader'); }}
+          onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }}
           onTagClick={handleTagClick}
           onAuthorClick={handleUserClick}
           showToast={showToast}
@@ -254,10 +350,10 @@ export default function App() {
       case 'collection-detail': return (
         <CollectionDetailScreen 
           collection={selectedCollection || MOCK_COLLECTIONS[0]} 
-          onBack={() => setCurrentScreen('library')} 
+          onBack={goBack} 
           savedPreprints={savedPreprints} 
           onToggleSave={toggleSave} 
-          onPreprintClick={(p) => { setSelectedPreprint(p); setCurrentScreen('reader'); }}
+          onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }}
           onTagClick={handleTagClick}
           onAuthorClick={handleUserClick}
           showToast={showToast}
@@ -266,6 +362,7 @@ export default function App() {
       case 'reader': return (
         <ReaderScreen 
           preprint={selectedPreprint || allPreprints[0]} 
+          onBack={goBack}
           onToggleSave={toggleSave} 
           isSaved={savedPreprints.some(p => p.id === (selectedPreprint?.id || allPreprints[0].id))}
           onRate={(rating) => handleRate(selectedPreprint?.id || allPreprints[0].id, rating)}
@@ -275,21 +372,21 @@ export default function App() {
           onCite={() => setIsCitationModalOpen(true)}
         />
       );
-      case 'profile': return <ProfileScreen onEdit={() => setCurrentScreen('edit-profile')} onSettings={() => setCurrentScreen('notification-settings')} onSignOut={() => { setIsLoggedIn(false); setCurrentScreen('login'); }} onInstitutionClick={handleInstitutionClick} preprints={allPreprints} showToast={showToast} />;
-      case 'edit-profile': return <EditProfileScreen onBack={() => setCurrentScreen('profile')} showToast={showToast} />;
-      case 'notification-settings': return <SettingsScreen onBack={() => setCurrentScreen('profile')} onNavigate={(s: Screen) => setCurrentScreen(s)} showToast={showToast} />;
-      case 'change-password': return <ChangePasswordScreen onBack={() => setCurrentScreen('notification-settings')} showToast={showToast} />;
-      case '2fa-setup': return <TwoFactorAuthScreen onBack={() => setCurrentScreen('notification-settings')} onNext={() => setCurrentScreen('2fa-backup')} showToast={showToast} />;
-      case '2fa-backup': return <TwoFactorBackupCodesScreen onBack={() => setCurrentScreen('2fa-setup')} onDone={() => setCurrentScreen('notification-settings')} showToast={showToast} />;
-      case 'security-log': return <SecurityLogScreen onBack={() => setCurrentScreen('notification-settings')} showToast={showToast} />;
-      case 'notifications': return <NotificationsScreen onDailyDigest={() => setCurrentScreen('daily-digest')} onWeeklyDigest={() => setCurrentScreen('weekly-digest')} onBack={() => setCurrentScreen('home')} showToast={showToast} />;
-      case 'trends': return <TrendsScreen onTopicClick={() => setCurrentScreen('topic-insight')} showToast={showToast} />;
-      case 'daily-digest': return <DailyDigestScreen onBack={() => setCurrentScreen('notifications')} showToast={showToast} />;
-      case 'weekly-digest': return <WeeklyDigestScreen onBack={() => setCurrentScreen('notifications')} showToast={showToast} />;
+      case 'profile': return <ProfileScreen onEdit={() => navigateTo('edit-profile')} onSettings={() => navigateTo('notification-settings')} onSignOut={() => { setIsLoggedIn(false); setCurrentScreen('login'); setNavigationHistory([]); }} onInstitutionClick={handleInstitutionClick} preprints={allPreprints} showToast={showToast} />;
+      case 'edit-profile': return <EditProfileScreen onBack={goBack} showToast={showToast} />;
+      case 'notification-settings': return <SettingsScreen onBack={goBack} onNavigate={(s: Screen) => navigateTo(s)} onLegal={(type) => { setLegalType(type); navigateTo('legal'); }} showToast={showToast} />;
+      case 'change-password': return <ChangePasswordScreen onBack={goBack} showToast={showToast} />;
+      case '2fa-setup': return <TwoFactorAuthScreen onBack={goBack} onNext={() => navigateTo('2fa-backup')} showToast={showToast} />;
+      case '2fa-backup': return <TwoFactorBackupCodesScreen onBack={goBack} onDone={() => navigateTo('notification-settings')} showToast={showToast} />;
+      case 'security-log': return <SecurityLogScreen onBack={goBack} showToast={showToast} />;
+      case 'notifications': return <NotificationsScreen onDailyDigest={() => navigateTo('daily-digest')} onWeeklyDigest={() => navigateTo('weekly-digest')} onBack={goBack} showToast={showToast} />;
+      case 'trends': return <TrendsScreen onTopicClick={() => navigateTo('topic-insight')} showToast={showToast} />;
+      case 'daily-digest': return <DailyDigestScreen onBack={goBack} showToast={showToast} />;
+      case 'weekly-digest': return <WeeklyDigestScreen onBack={goBack} showToast={showToast} />;
       case 'topic-insight': return (
         <TopicInsightScreen 
-          onBack={() => setCurrentScreen('trends')} 
-          onPreprintClick={(p) => { setSelectedPreprint(p); setCurrentScreen('reader'); }}
+          onBack={goBack} 
+          onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }}
           onTagClick={handleTagClick}
           onAuthorClick={handleUserClick}
           showToast={showToast}
@@ -298,8 +395,8 @@ export default function App() {
       case 'user-profile': return (
         <UserProfileScreen 
           user={selectedUser!} 
-          onBack={() => setCurrentScreen('home')} 
-          onPreprintClick={(p) => { setSelectedPreprint(p); setCurrentScreen('reader'); }} 
+          onBack={goBack} 
+          onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }} 
           onToggleSave={toggleSave}
           onTagClick={handleTagClick}
           onInstitutionClick={handleInstitutionClick}
@@ -310,9 +407,9 @@ export default function App() {
       case 'tag-results': return (
         <TagResultsScreen 
           tag={selectedTag!} 
-          onBack={() => setCurrentScreen('home')} 
+          onBack={goBack} 
           preprints={allPreprints} 
-          onPreprintClick={(p) => { setSelectedPreprint(p); setCurrentScreen('reader'); }}
+          onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }}
           onToggleSave={toggleSave}
           savedPreprints={savedPreprints}
           onTagClick={handleTagClick}
@@ -323,13 +420,14 @@ export default function App() {
       case 'institution-detail': return (
         <InstitutionDetailScreen 
           institution={selectedInstitution!} 
-          onBack={() => setCurrentScreen('home')} 
+          onBack={goBack} 
           onUserClick={handleUserClick}
           showToast={showToast}
         />
       );
-      case 'feeds': return <CustomFeedsScreen onBack={() => setCurrentScreen('home')} showToast={showToast} />;
-      default: return <HomeScreen onPreprintClick={(p) => { setSelectedPreprint(p); setCurrentScreen('reader'); }} savedPreprints={savedPreprints} onToggleSave={toggleSave} searchQuery={searchQuery} onTagClick={handleTagClick} preprints={allPreprints} showToast={showToast} />;
+      case 'legal': return <LegalScreen type={legalType} onBack={goBack} />;
+      case 'feeds': return <CustomFeedsScreen onBack={goBack} showToast={showToast} />;
+      default: return <HomeScreen onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }} savedPreprints={savedPreprints} onToggleSave={toggleSave} searchQuery={searchQuery} onTagClick={handleTagClick} preprints={allPreprints} showToast={showToast} />;
     }
   };
 
@@ -492,11 +590,173 @@ function NavItem({ icon, label, active, onClick }: { icon: React.ReactNode, labe
 }
 
 const SOURCE_CATEGORIES: Record<string, string[]> = {
-  'arXiv': ['Physics', 'Computer Science', 'Mathematics', 'Quantitative Biology', 'Quantitative Finance', 'Statistics', 'Electrical Engineering', 'Economics'],
-  'bioRxiv': ['Animal Behavior', 'Biochemistry', 'Bioengineering', 'Bioinformatics', 'Cancer Biology', 'Cell Biology', 'Genetics', 'Microbiology', 'Neuroscience'],
-  'medRxiv': ['Epidemiology', 'Health Informatics', 'Infectious Diseases', 'Medical Education', 'Neurology', 'Oncology', 'Public Health'],
-  'PhilPapers': ['Epistemology', 'Ethics', 'Metaphysics', 'Philosophy of Mind', 'Philosophy of Science'],
-  'OA Journals': ['Humanities', 'Social Sciences', 'Life Sciences', 'Physical Sciences'],
+  'arXiv': [
+    'Quantum Physics', 
+    'General Relativity and Quantum Cosmology', 
+    'Machine Learning', 
+    'High Energy Physics - Theory', 
+    'High Energy Physics - Experiment',
+    'Astrophysics',
+    'Condensed Matter',
+    'Mathematics',
+    'Computer Science',
+    'Quantitative Biology',
+    'Quantitative Finance',
+    'Statistics',
+    'Electrical Engineering',
+    'Economics'
+  ],
+  'bioRxiv': [
+    'Animal Behavior', 
+    'Biochemistry', 
+    'Bioengineering', 
+    'Bioinformatics', 
+    'Cancer Biology', 
+    'Cell Biology', 
+    'Clinical Trials',
+    'Developmental Biology',
+    'Ecology',
+    'Evolutionary Biology',
+    'Genetics', 
+    'Genomics',
+    'Immunology',
+    'Microbiology', 
+    'Molecular Biology',
+    'Neuroscience',
+    'Paleontology',
+    'Pathology',
+    'Pharmacology',
+    'Physiology',
+    'Plant Biology',
+    'Scientific Communication',
+    'Synthetic Biology',
+    'Systems Biology',
+    'Zoology'
+  ],
+  'medRxiv': [
+    'Addiction Medicine',
+    'Allergy and Immunology',
+    'Anesthesia',
+    'Cardiovascular Medicine',
+    'Dentistry and Oral Medicine',
+    'Dermatology',
+    'Emergency Medicine',
+    'Endocrinology',
+    'Epidemiology', 
+    'Forensic Medicine',
+    'Gastroenterology',
+    'Genetic and Genomic Medicine',
+    'Geriatric Medicine',
+    'Health Economics',
+    'Health Informatics', 
+    'Health Policy',
+    'Hematology',
+    'Infectious Diseases', 
+    'Intensive Care and Critical Care Medicine',
+    'Medical Education', 
+    'Medical Ethics',
+    'Nephrology',
+    'Neurology', 
+    'Nursing',
+    'Nutrition',
+    'Obstetrics and Gynecology',
+    'Occupational and Environmental Health',
+    'Oncology', 
+    'Ophthalmology',
+    'Orthopedics',
+    'Otolaryngology',
+    'Pain Medicine',
+    'Palliative Medicine',
+    'Pathology',
+    'Pediatrics',
+    'Pharmacology and Therapeutics',
+    'Physical and Rehabilitation Medicine',
+    'Psychiatry and Clinical Psychology',
+    'Public Health',
+    'Radiology and Imaging',
+    'Respiratory Medicine',
+    'Rheumatology',
+    'Sexual and Reproductive Health',
+    'Sports Medicine',
+    'Surgery',
+    'Toxicology',
+    'Transplantation',
+    'Urology'
+  ],
+  'ChemRxiv': [
+    'Agricultural and Food Chemistry',
+    'Analytical Chemistry',
+    'Biological and Medicinal Chemistry',
+    'Catalysis',
+    'Chemical Education',
+    'Chemical Engineering and Industrial Chemistry',
+    'Computational and Theoretical Chemistry',
+    'Energy and Environmental Chemistry',
+    'Inorganic Chemistry',
+    'Materials Chemistry',
+    'Nanoscience',
+    'Organic Chemistry',
+    'Physical Chemistry',
+    'Polymer Science'
+  ],
+  'SSRN': [
+    'Accounting',
+    'Anthropology',
+    'Cognitive Science',
+    'Corporate Governance',
+    'Economics',
+    'Education',
+    'Finance',
+    'Health Economics',
+    'Information Systems',
+    'Innovation',
+    'Law',
+    'Management',
+    'Marketing',
+    'Philosophy',
+    'Political Science',
+    'Psychology',
+    'Public Policy',
+    'Sociology',
+    'Sustainability'
+  ],
+  'Research Square': [
+    'Life Sciences',
+    'Medicine',
+    'Physical Sciences',
+    'Social Sciences',
+    'Engineering',
+    'Humanities'
+  ],
+  'PhilPapers': [
+    'Epistemology', 
+    'Ethics', 
+    'Metaphysics', 
+    'Philosophy of Mind', 
+    'Philosophy of Science',
+    'Philosophy of Language',
+    'Philosophy of Religion',
+    'Aesthetics',
+    'Social and Political Philosophy',
+    'History of Western Philosophy',
+    'Philosophical Traditions'
+  ],
+  'OA Journals': [
+    'Multidisciplinary',
+    'Life Sciences',
+    'Physical Sciences',
+    'Health Sciences',
+    'Social Sciences',
+    'Humanities'
+  ],
+  'OA Articles': [
+    'Multidisciplinary',
+    'Life Sciences',
+    'Physical Sciences',
+    'Health Sciences',
+    'Social Sciences',
+    'Humanities'
+  ]
 };
 
 function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery, onTagClick, preprints, showToast }: { 
@@ -522,15 +782,21 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
   const [showCategoryMenu, setShowCategoryMenu] = useState<string | null>(null);
 
   const handleToggleSource = (source: string) => {
-    if (activeSources.includes(source)) {
-      setActiveSources(activeSources.filter(s => s !== source));
-      const newCats = { ...activeCategories };
-      delete newCats[source];
-      setActiveCategories(newCats);
-    } else {
+    if (!activeSources.includes(source)) {
       setActiveSources([...activeSources, source]);
       setShowCategoryMenu(source);
+    } else {
+      setShowCategoryMenu(showCategoryMenu === source ? null : source);
     }
+  };
+
+  const handleRemoveSource = (source: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setActiveSources(activeSources.filter(s => s !== source));
+    const newCats = { ...activeCategories };
+    delete newCats[source];
+    setActiveCategories(newCats);
+    if (showCategoryMenu === source) setShowCategoryMenu(null);
   };
 
   const handleToggleCategory = (source: string, category: string) => {
@@ -619,9 +885,23 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
           <div key={source} className="relative shrink-0">
             <button 
               onClick={() => handleToggleSource(source)}
-              className={`${activeSources.includes(source) ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700'} px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap flex items-center gap-1`}
+              className={`${activeSources.includes(source) ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700'} px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap flex items-center gap-2 transition-all`}
             >
-              {source} {SOURCE_CATEGORIES[source] && <ChevronRight className={`size-4 transition-transform ${showCategoryMenu === source ? 'rotate-90' : ''}`} />}
+              <span>{source}</span>
+              {activeSources.includes(source) && (
+                <div className="flex items-center gap-1 border-l border-white/20 pl-2">
+                  <ChevronRight 
+                    className={`size-4 transition-transform ${showCategoryMenu === source ? 'rotate-90' : ''}`} 
+                  />
+                  <X 
+                    className="size-3.5 hover:bg-white/20 rounded-full" 
+                    onClick={(e) => handleRemoveSource(source, e)}
+                  />
+                </div>
+              )}
+              {!activeSources.includes(source) && SOURCE_CATEGORIES[source] && (
+                <ChevronRight className="size-4 text-slate-400" />
+              )}
             </button>
             
             <AnimatePresence>
@@ -629,21 +909,39 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
                 <>
                   <div className="fixed inset-0 z-30" onClick={() => setShowCategoryMenu(null)} />
                   <motion.div 
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 10 }}
-                    className="absolute top-full left-0 mt-2 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-40 p-4 max-h-80 overflow-y-auto"
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    className="absolute top-full left-0 mt-2 w-72 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-40 p-4 max-h-96 overflow-y-auto"
                   >
-                    <h4 className="text-[10px] font-bold uppercase text-slate-400 mb-3 tracking-widest">Select Categories</h4>
+                    <div className="flex justify-between items-center mb-4">
+                      <h4 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">
+                        {source} Categories
+                      </h4>
+                      <button 
+                        onClick={() => {
+                          const newCats = { ...activeCategories };
+                          delete newCats[source];
+                          setActiveCategories(newCats);
+                        }}
+                        className="text-[10px] font-bold text-primary uppercase hover:underline"
+                      >
+                        Clear All
+                      </button>
+                    </div>
                     <div className="space-y-1">
                       {SOURCE_CATEGORIES[source].map(cat => (
                         <button
                           key={cat}
                           onClick={() => handleToggleCategory(source, cat)}
-                          className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between ${activeCategories[source]?.includes(cat) ? 'bg-primary/10 text-primary' : 'hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+                          className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-medium transition-all flex items-center justify-between ${activeCategories[source]?.includes(cat) ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300'}`}
                         >
-                          {cat}
-                          {activeCategories[source]?.includes(cat) && <PlusCircle className="size-3 rotate-45" />}
+                          <span className="truncate pr-2">{cat}</span>
+                          {activeCategories[source]?.includes(cat) ? (
+                            <Check className="size-3.5 shrink-0" />
+                          ) : (
+                            <Plus className="size-3.5 opacity-30 shrink-0" />
+                          )}
                         </button>
                       ))}
                     </div>
@@ -1513,8 +1811,43 @@ function CollectionDetailScreen({ collection, onBack, savedPreprints, onToggleSa
   );
 }
 
-function ReaderScreen({ preprint, onToggleSave, isSaved, onRate, onTagClick, onAuthorClick, showToast, onCite }: { 
+function UserListModal({ title, users, onClose }: { title: string, users: string[], onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl"
+      >
+        <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <h3 className="text-xl font-bold">{title}</h3>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full">
+            <X className="size-5" />
+          </button>
+        </div>
+        <div className="p-6 max-h-[60vh] overflow-y-auto no-scrollbar space-y-4">
+          {users.length > 0 ? users.map((user, idx) => (
+            <div key={idx} className="flex items-center gap-3 p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer">
+              <div className="size-10 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-500 font-bold">
+                {user.charAt(0)}
+              </div>
+              <div>
+                <p className="text-sm font-bold">{user}</p>
+                <p className="text-[10px] text-slate-400 uppercase tracking-widest">Researcher</p>
+              </div>
+            </div>
+          )) : (
+            <p className="text-center text-slate-500 py-8">No users found.</p>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagClick, onAuthorClick, showToast, onCite }: { 
   preprint: Preprint, 
+  onBack: () => void,
   onToggleSave: (p: Preprint) => void, 
   isSaved: boolean,
   onRate: (rating: number) => void,
@@ -1524,6 +1857,10 @@ function ReaderScreen({ preprint, onToggleSave, isSaved, onRate, onTagClick, onA
   onCite: () => void
 }) {
   const [readerTheme, setReaderTheme] = useState<'light' | 'dark' | 'sepia'>('light');
+  const [commentText, setCommentText] = useState('');
+  const [comments, setComments] = useState<PaperComment[]>(preprint.comments || []);
+  const [userListModal, setUserListModal] = useState<{ title: string, users: string[] } | null>(null);
+  const [showOutline, setShowOutline] = useState(false);
 
   const handleRateWithToast = (rating: number) => {
     onRate(rating);
@@ -1533,6 +1870,35 @@ function ReaderScreen({ preprint, onToggleSave, isSaved, onRate, onTagClick, onA
   const handleToggleSaveWithToast = () => {
     onToggleSave(preprint);
     showToast(isSaved ? 'Removed from library' : 'Saved to library for offline reading');
+  };
+
+  const handleDownload = () => {
+    showToast('Preparing PDF for download...');
+    setTimeout(() => {
+      showToast('Download started: ' + preprint.title.substring(0, 20) + '.pdf');
+    }, 1500);
+  };
+
+  const handleShare = () => {
+    const shareUrl = `https://researchflow.io/paper/${preprint.id}`;
+    navigator.clipboard.writeText(shareUrl);
+    showToast('Share link copied to clipboard!');
+  };
+
+  const handleAddComment = () => {
+    if (!commentText.trim()) return;
+    const newComment: PaperComment = {
+      id: Date.now().toString(),
+      userId: 'aris_thorne',
+      userName: 'Dr. Aris Thorne',
+      userImageUrl: 'https://picsum.photos/seed/profile/200/200',
+      text: commentText,
+      date: 'Just now',
+      likes: 0
+    };
+    setComments([newComment, ...comments]);
+    setCommentText('');
+    showToast('Comment posted!');
   };
 
   const themeClasses = {
@@ -1550,6 +1916,13 @@ function ReaderScreen({ preprint, onToggleSave, isSaved, onRate, onTagClick, onA
       {/* Reader Controls */}
       <div className="sticky top-0 z-20 px-4 py-2 flex items-center justify-between bg-inherit border-b border-black/5 dark:border-white/5">
         <div className="flex items-center gap-2">
+          <button 
+            onClick={onBack}
+            className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors mr-2"
+            title="Back"
+          >
+            <ArrowLeft className="size-5" />
+          </button>
           <button 
             onClick={() => setReaderTheme('light')}
             className={`p-2 rounded-lg transition-all ${readerTheme === 'light' ? 'bg-primary text-white shadow-lg' : 'hover:bg-black/5'}`}
@@ -1619,17 +1992,30 @@ function ReaderScreen({ preprint, onToggleSave, isSaved, onRate, onTagClick, onA
         </div>
 
         <div className="flex gap-6 mb-8 border-y border-black/5 dark:border-white/5 py-4">
-          <div className="flex flex-col">
-            <span className="text-2xl font-bold">{preprint.citations || 0}</span>
+          <div 
+            className="flex flex-col cursor-pointer group"
+            onClick={() => setUserListModal({ title: 'Cited By', users: preprint.citedBy || [] })}
+          >
+            <span className="text-2xl font-bold group-hover:text-primary transition-colors">{preprint.citations || 0}</span>
             <span className="text-[10px] font-bold uppercase text-slate-400">Citations</span>
           </div>
-          <div className="flex flex-col">
-            <span className="text-2xl font-bold">{preprint.savesCount || 0}</span>
+          <div 
+            className="flex flex-col cursor-pointer group"
+            onClick={() => setUserListModal({ title: 'Saved By', users: preprint.savedBy || [] })}
+          >
+            <span className="text-2xl font-bold group-hover:text-primary transition-colors">{preprint.savesCount || 0}</span>
             <span className="text-[10px] font-bold uppercase text-slate-400">Library Saves</span>
           </div>
           <div className="flex flex-col">
             <span className="text-2xl font-bold">{preprint.views || 0}</span>
             <span className="text-[10px] font-bold uppercase text-slate-400">Views</span>
+          </div>
+          <div 
+            className="flex flex-col cursor-pointer group"
+            onClick={() => setUserListModal({ title: 'Rated By', users: preprint.ratedBy?.map(r => `${r.userId} (${r.rating}★)`) || [] })}
+          >
+            <span className="text-2xl font-bold group-hover:text-primary transition-colors">{preprint.ratedBy?.length || 0}</span>
+            <span className="text-[10px] font-bold uppercase text-slate-400">Ratings</span>
           </div>
         </div>
 
@@ -1650,11 +2036,13 @@ function ReaderScreen({ preprint, onToggleSave, isSaved, onRate, onTagClick, onA
           <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${readerTheme === 'sepia' ? 'bg-[#5b4636]/10 text-[#5b4636]' : 'bg-primary/10 text-primary'}`}>Preprint</span>
           <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${readerTheme === 'sepia' ? 'bg-[#5b4636]/10 text-[#5b4636]' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}>Open Access</span>
         </div>
+        
         <div className={`max-w-none ${readerTheme === 'dark' ? 'prose-invert' : ''}`}>
           <h3 className="text-lg font-bold mb-4">Abstract</h3>
           <p className={`italic mb-8 leading-relaxed text-base md:text-lg ${readerTheme === 'sepia' ? 'text-[#5b4636]/90' : 'text-slate-700 dark:text-slate-300'}`}>
             {preprint.abstract}
           </p>
+
           <h3 className="text-lg font-bold mb-4">1. Introduction</h3>
           <p className={`mb-6 leading-relaxed text-sm md:text-base ${readerTheme === 'sepia' ? 'text-[#5b4636]/90' : 'text-slate-700 dark:text-slate-300'}`}>
             Neural plasticity, the brain's ability to reorganize itself by forming new neural connections throughout life, allows neurons (nerve cells) in the brain to compensate for injury and disease and to adjust their activities in response to new situations or to changes in their environment.
@@ -1664,8 +2052,162 @@ function ReaderScreen({ preprint, onToggleSave, isSaved, onRate, onTagClick, onA
               The prefrontal cortex (PFC) serves as a hub for these adaptations. <span className={`border-b-2 ${readerTheme === 'sepia' ? 'bg-[#5b4636]/10 border-[#5b4636]' : 'bg-primary/20 border-primary'}`}>Previous research indicated that long-term potentiation (LTP) served as the primary driver</span>, but our data indicates a secondary, parallel mechanism involving fast-acting glial support cells.
             </p>
           </div>
+          
+          <div className="my-12 pt-8 border-t border-black/5 dark:border-white/5">
+            <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
+              <Quote className="size-5 text-primary" />
+              References ({preprint.references?.length || 0})
+            </h3>
+            <div className="space-y-4">
+              {preprint.references?.map((ref, idx) => (
+                <div key={idx} className={`p-4 rounded-xl border flex items-start gap-4 hover:border-primary transition-colors cursor-pointer ${readerTheme === 'sepia' ? 'bg-[#5b4636]/5 border-[#5b4636]/20' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700'}`}>
+                  <div className="size-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0 font-bold text-xs">
+                    {idx + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold line-clamp-2">{ref}</p>
+                    <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Cited in this work</p>
+                  </div>
+                  <ExternalLink className="size-4 text-slate-400" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="my-12 pt-8 border-t border-black/5 dark:border-white/5">
+            <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
+              <MessageSquare className="size-5 text-primary" />
+              Comments ({comments.length})
+            </h3>
+            
+            <div className="mb-8">
+              <div className={`p-4 rounded-2xl border ${readerTheme === 'sepia' ? 'bg-[#5b4636]/5 border-[#5b4636]/20' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700'}`}>
+                <textarea 
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  placeholder="Share your thoughts on this research..."
+                  rows={3}
+                  className="w-full bg-transparent outline-none text-sm resize-none mb-3"
+                />
+                <div className="flex justify-end">
+                  <button 
+                    onClick={handleAddComment}
+                    disabled={!commentText.trim()}
+                    className="bg-primary text-white text-xs font-bold px-4 py-2 rounded-lg shadow-lg shadow-primary/20 disabled:opacity-50 transition-all"
+                  >
+                    Post Comment
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              {comments.map((comment) => (
+                <div key={comment.id} className="flex gap-4">
+                  <img src={comment.userImageUrl} alt={comment.userName} className="size-10 rounded-full shrink-0" referrerPolicy="no-referrer" />
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h4 className="text-sm font-bold">{comment.userName}</h4>
+                      <span className="text-[10px] text-slate-400">{comment.date}</span>
+                    </div>
+                    <p className="text-sm leading-relaxed opacity-80 mb-2">{comment.text}</p>
+                    <div className="flex items-center gap-4">
+                      <button className="flex items-center gap-1 text-xs text-slate-400 hover:text-primary transition-colors">
+                        <TrendingUp className="size-3" />
+                        {comment.likes}
+                      </button>
+                      <button className="text-xs text-slate-400 hover:text-primary transition-colors">Reply</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </article>
+
+      {userListModal && (
+        <UserListModal 
+          title={userListModal.title} 
+          users={userListModal.users} 
+          onClose={() => setUserListModal(null)} 
+        />
+      )}
+
+      {/* Floating Action Bar */}
+      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-40">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-2 flex items-center gap-1 backdrop-blur-md bg-opacity-90">
+          <button 
+            onClick={() => setShowOutline(true)}
+            className="p-3 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors flex flex-col items-center gap-1"
+          >
+            <List className="size-5 text-slate-600 dark:text-slate-400" />
+            <span className="text-[10px] font-bold uppercase tracking-tighter">Outline</span>
+          </button>
+          <div className="w-px h-8 bg-slate-200 dark:bg-slate-800 mx-1"></div>
+          <button 
+            onClick={handleShare}
+            className="p-3 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors flex flex-col items-center gap-1"
+          >
+            <Share2 className="size-5 text-slate-600 dark:text-slate-400" />
+            <span className="text-[10px] font-bold uppercase tracking-tighter">Share</span>
+          </button>
+          <button 
+            onClick={handleDownload}
+            className="p-3 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors flex flex-col items-center gap-1"
+          >
+            <Download className="size-5 text-slate-600 dark:text-slate-400" />
+            <span className="text-[10px] font-bold uppercase tracking-tighter">PDF</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Outline Modal */}
+      <AnimatePresence>
+        {showOutline && (
+          <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4">
+            <motion.div 
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="bg-white dark:bg-slate-900 w-full max-w-md rounded-t-3xl md:rounded-3xl overflow-hidden shadow-2xl"
+            >
+              <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                <h3 className="text-xl font-bold">Paper Outline</h3>
+                <button onClick={() => setShowOutline(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full">
+                  <X className="size-5" />
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                {[
+                  { id: 'abstract', label: 'Abstract' },
+                  { id: 'intro', label: '1. Introduction' },
+                  { id: 'methods', label: '2. Methodology' },
+                  { id: 'results', label: '3. Results & Discussion' },
+                  { id: 'conclusion', label: '4. Conclusion' },
+                  { id: 'refs', label: 'References' },
+                  { id: 'comments', label: 'Comments' }
+                ].map((item, idx) => (
+                  <button 
+                    key={item.id}
+                    onClick={() => {
+                      setShowOutline(false);
+                      showToast(`Navigating to ${item.label}`);
+                    }}
+                    className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-2xl transition-colors group"
+                  >
+                    <div className="flex items-center gap-4">
+                      <span className="text-xs font-bold text-slate-400 group-hover:text-primary transition-colors">0{idx + 1}</span>
+                      <span className="font-bold">{item.label}</span>
+                    </div>
+                    <ChevronRight className="size-4 text-slate-300 group-hover:text-primary transition-colors" />
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -2266,14 +2808,19 @@ function LoginScreen({ onLogin, onRegister, showToast }: { onLogin: () => void, 
   );
 }
 
-function RegisterScreen({ onBack, onRegister, showToast }: { onBack: () => void, onRegister: () => void, showToast: (msg: string) => void }) {
+function RegisterScreen({ onBack, onRegister, onLegal, showToast }: { onBack: () => void, onRegister: () => void, onLegal: (type: 'tos' | 'privacy') => void, showToast: (msg: string) => void }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [affiliation, setAffiliation] = useState('');
   const [password, setPassword] = useState('');
+  const [agreed, setAgreed] = useState(false);
 
   const handleRegister = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!agreed) {
+      showToast('Please agree to the Terms of Service and Privacy Policy');
+      return;
+    }
     if (name && email && affiliation && password) {
       onRegister();
       showToast('Account created! Welcome to ResearchFlow.');
@@ -2336,6 +2883,19 @@ function RegisterScreen({ onBack, onRegister, showToast }: { onBack: () => void,
               placeholder="••••••••"
             />
           </div>
+
+          <div className="flex items-start gap-3 mt-4">
+            <div 
+              onClick={() => setAgreed(!agreed)}
+              className={`mt-1 size-5 rounded border flex items-center justify-center cursor-pointer transition-colors ${agreed ? 'bg-primary border-primary' : 'border-slate-300 dark:border-slate-600'}`}
+            >
+              {agreed && <Check className="size-3.5 text-white" />}
+            </div>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              I agree to the <button type="button" onClick={() => onLegal('tos')} className="text-primary font-bold hover:underline">Terms of Service</button> and <button type="button" onClick={() => onLegal('privacy')} className="text-primary font-bold hover:underline">Privacy Policy</button>.
+            </p>
+          </div>
+
           <button 
             type="submit"
             className="w-full bg-primary text-white font-bold py-5 rounded-2xl shadow-xl shadow-primary/20 active:scale-95 transition-all mt-4"
@@ -2343,10 +2903,6 @@ function RegisterScreen({ onBack, onRegister, showToast }: { onBack: () => void,
             Create Account
           </button>
         </form>
-
-        <p className="mt-8 text-[10px] text-slate-400 text-center leading-relaxed">
-          By registering, you agree to our <span className="underline">Terms of Service</span> and <span className="underline">Privacy Policy</span>.
-        </p>
       </div>
     </div>
   );
@@ -2362,6 +2918,15 @@ function Input({ label, value }: { label: string, value: string }) {
 }
 
 function NotificationsScreen({ onDailyDigest, onWeeklyDigest, onBack, showToast }: { onDailyDigest: () => void, onWeeklyDigest: () => void, onBack: () => void, showToast: (msg: string) => void }) {
+  const [activeTab, setActiveTab] = useState<'all' | 'feeds' | 'activity'>('all');
+
+  const filteredNotifications = MOCK_NOTIFICATIONS.filter(n => {
+    if (activeTab === 'all') return true;
+    if (activeTab === 'feeds') return n.type === 'feed';
+    if (activeTab === 'activity') return n.type !== 'feed';
+    return true;
+  });
+
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950">
       <header className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between sticky top-0 bg-white dark:bg-slate-950 z-20">
@@ -2378,41 +2943,72 @@ function NotificationsScreen({ onDailyDigest, onWeeklyDigest, onBack, showToast 
       </header>
 
       <div className="flex border-b border-slate-100 dark:border-slate-800">
-        <button className="flex-1 py-4 text-sm font-bold border-b-2 border-primary text-primary">All</button>
-        <button className="flex-1 py-4 text-sm font-medium text-slate-500">Feeds</button>
-        <button className="flex-1 py-4 text-sm font-medium text-slate-500">Activity</button>
+        <button 
+          onClick={() => setActiveTab('all')}
+          className={`flex-1 py-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'all' ? 'border-primary text-primary' : 'border-transparent text-slate-500'}`}
+        >
+          All
+        </button>
+        <button 
+          onClick={() => setActiveTab('feeds')}
+          className={`flex-1 py-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'feeds' ? 'border-primary text-primary' : 'border-transparent text-slate-500'}`}
+        >
+          Feeds
+        </button>
+        <button 
+          onClick={() => setActiveTab('activity')}
+          className={`flex-1 py-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'activity' ? 'border-primary text-primary' : 'border-transparent text-slate-500'}`}
+        >
+          Activity
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-8 pb-20">
-        <div>
-          <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-4">New Feed Results</h3>
-          <div className="space-y-4">
-            {MOCK_NOTIFICATIONS.filter(n => n.type === 'feed').map(n => (
-              <NotificationItem key={n.id} notification={n} />
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-4">Recent Activity</h3>
-          <div className="space-y-4">
-            {MOCK_NOTIFICATIONS.filter(n => n.type !== 'feed').map(n => (
-              <NotificationItem key={n.id} notification={n} />
-            ))}
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-start gap-4 shadow-sm">
-              <div className="size-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500 shrink-0">
-                <Bookmark className="size-6" />
-              </div>
-              <div className="flex-1">
-                <div className="flex justify-between items-start mb-1">
-                  <h4 className="text-sm font-bold">Collection shared with you</h4>
-                  <span className="text-[10px] text-slate-400 font-medium">Yesterday</span>
-                </div>
-                <p className="text-xs text-slate-500 leading-relaxed">The "Advanced Robotics Lab" shared their bibliography with you.</p>
-              </div>
+        {activeTab !== 'activity' && filteredNotifications.some(n => n.type === 'feed') && (
+          <div>
+            <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-4">New Feed Results</h3>
+            <div className="space-y-4">
+              {filteredNotifications.filter(n => n.type === 'feed').map(n => (
+                <NotificationItem key={n.id} notification={n} />
+              ))}
             </div>
           </div>
-        </div>
+        )}
+
+        {activeTab !== 'feeds' && (filteredNotifications.some(n => n.type !== 'feed') || activeTab === 'activity') && (
+          <div>
+            <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-4">Recent Activity</h3>
+            <div className="space-y-4">
+              {filteredNotifications.filter(n => n.type !== 'feed').map(n => (
+                <NotificationItem key={n.id} notification={n} />
+              ))}
+              {activeTab !== 'feeds' && (
+                <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-start gap-4 shadow-sm">
+                  <div className="size-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500 shrink-0">
+                    <Bookmark className="size-6" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex justify-between items-start mb-1">
+                      <h4 className="text-sm font-bold">Collection shared with you</h4>
+                      <span className="text-[10px] text-slate-400 font-medium">Yesterday</span>
+                    </div>
+                    <p className="text-xs text-slate-500 leading-relaxed">The "Advanced Robotics Lab" shared their bibliography with you.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {filteredNotifications.length === 0 && activeTab !== 'all' && (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="size-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400 mb-4">
+              <BellOff className="size-8" />
+            </div>
+            <h4 className="text-lg font-bold mb-1">No {activeTab} notifications</h4>
+            <p className="text-sm text-slate-500">We'll notify you when something new arrives.</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -3166,7 +3762,7 @@ function ShareScreen({ onBack, showToast }: { onBack: () => void, showToast: (ms
   );
 }
 
-function SettingsScreen({ onBack, onNavigate, showToast }: { onBack: () => void, onNavigate: (s: Screen) => void, showToast: (msg: string) => void }) {
+function SettingsScreen({ onBack, onNavigate, onLegal, showToast }: { onBack: () => void, onNavigate: (s: Screen) => void, onLegal: (type: 'tos' | 'privacy') => void, showToast: (msg: string) => void }) {
   const [activeTab, setActiveTab] = useState<'notifications' | 'security'>('notifications');
   const [settings, setSettings] = useState({
     pushEnabled: true,
@@ -3358,7 +3954,7 @@ function SettingsScreen({ onBack, onNavigate, showToast }: { onBack: () => void,
               </div>
             </section>
 
-            <div className="px-8 py-6 text-center">
+            <div className="px-8 py-6 text-center space-y-4">
               <div className="flex items-center justify-center gap-2 text-slate-400 mb-2">
                 <ShieldCheck className="size-4" />
                 <span className="text-[10px] font-bold uppercase tracking-widest">End-to-End Encrypted</span>
@@ -3366,6 +3962,11 @@ function SettingsScreen({ onBack, onNavigate, showToast }: { onBack: () => void,
               <p className="text-xs text-slate-400 leading-relaxed">
                 Your research data and personal information are protected by industry-standard encryption.
               </p>
+              <div className="flex justify-center gap-4 pt-4">
+                <button onClick={() => onLegal('tos')} className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline">Terms of Service</button>
+                <span className="text-slate-300">•</span>
+                <button onClick={() => onLegal('privacy')} className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline">Privacy Policy</button>
+              </div>
             </div>
           </>
         )}

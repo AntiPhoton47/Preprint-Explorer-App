@@ -7,12 +7,23 @@ export const MOCK_PREPRINTS: Preprint[] = [
     authors: ['A. Smith', 'J. Doe', 'R. Chen'],
     source: 'arXiv',
     date: 'Oct 24, 2023',
-    tags: ['Physics', 'Quantum Computing'],
+    tags: ['Quantum Physics', 'Machine Learning'],
     abstract: 'This study explores the underlying mechanisms of neural adaptation in the prefrontal cortex during high-level cognitive tasks...',
     isSaved: false,
     citations: 142,
     savesCount: 85,
-    type: 'Preprint'
+    type: 'Preprint',
+    comments: [
+      { id: 'c1', userId: 'dr_smith', userName: 'Dr. Sarah Smith', userImageUrl: 'https://i.pravatar.cc/150?u=dr_smith', text: 'Excellent theoretical framework. Have you considered the implications for fault-tolerant gates?', date: '2d ago', likes: 12 },
+      { id: 'c2', userId: 'prof_wilson', userName: 'Prof. James Wilson', userImageUrl: 'https://i.pravatar.cc/150?u=prof_wilson', text: 'The scaling analysis in Section 4 is particularly insightful.', date: '1d ago', likes: 5 }
+    ],
+    citedBy: ['dr_smith', 'prof_wilson', 'Dr. Elena Rodriguez', 'Prof. Mark Thorne'],
+    references: ['Quantum Error Correction: A Review', 'Neural Networks and Deep Learning', 'Scalable Quantum Architectures'],
+    savedBy: ['aris_thorne', 'dr_smith', 'prof_wilson'],
+    ratedBy: [
+      { userId: 'dr_smith', rating: 5 },
+      { userId: 'prof_wilson', rating: 4 }
+    ]
   },
   {
     id: '2',
@@ -20,12 +31,21 @@ export const MOCK_PREPRINTS: Preprint[] = [
     authors: ['Elena Rodriguez', 'Mark Thorne'],
     source: 'bioRxiv',
     date: 'Oct 22, 2023',
-    tags: ['Biology', 'Genetics'],
+    tags: ['Genetics', 'Plant Biology'],
     abstract: 'We observed significant variance in connectivity patterns between control and experimental groups...',
     isSaved: true,
     citations: 89,
     savesCount: 124,
-    type: 'Peer-Reviewed'
+    type: 'Peer-Reviewed',
+    comments: [
+      { id: 'c3', userId: 'aris_thorne', userName: 'Dr. Aris Thorne', userImageUrl: 'https://picsum.photos/seed/profile/200/200', text: 'The methodology for single-cell isolation is quite robust.', date: '3d ago', likes: 8 }
+    ],
+    citedBy: ['aris_thorne', 'Dr. Sarah Vance'],
+    references: ['Alpine Ecology: An Introduction', 'Genomic Analysis of High-Altitude Plants'],
+    savedBy: ['aris_thorne', 'dr_smith'],
+    ratedBy: [
+      { userId: 'aris_thorne', rating: 5 }
+    ]
   },
   {
     id: '3',
@@ -33,12 +53,18 @@ export const MOCK_PREPRINTS: Preprint[] = [
     authors: ['Dr. Sarah Vance', 'Michael J. Fox', 'Sarah Connor'],
     source: 'medRxiv',
     date: 'Oct 20, 2023',
-    tags: ['Medicine', 'Epidemiology'],
+    tags: ['Epidemiology', 'Public Health'],
     abstract: 'Data was processed using a custom Bayesian hierarchical model to account for individual baseline variations...',
     isSaved: false,
     citations: 215,
     savesCount: 342,
-    type: 'Conference Paper'
+    type: 'Conference Paper',
+    citedBy: ['prof_wilson', 'Dr. Aris Thorne'],
+    references: ['mRNA Vaccines: A New Era', 'Demographic Variations in Vaccine Efficacy'],
+    savedBy: ['dr_smith', 'prof_wilson'],
+    ratedBy: [
+      { userId: 'prof_wilson', rating: 5 }
+    ]
   },
   {
     id: '4',
@@ -46,7 +72,7 @@ export const MOCK_PREPRINTS: Preprint[] = [
     authors: ['L. Wong', 'K. Tanaka'],
     source: 'arXiv',
     date: 'Oct 18, 2023',
-    tags: ['Computer Science', 'Security'],
+    tags: ['Computer Science', 'Statistics'],
     abstract: 'Examining the trade-offs between decentralization and speed in modern consensus mechanisms...',
     isSaved: false,
     citations: 56,
@@ -59,7 +85,7 @@ export const MOCK_PREPRINTS: Preprint[] = [
     authors: ['Alice Wong', 'Bob Lee'],
     source: 'arXiv',
     date: 'Aug 12, 2023',
-    tags: ['Comp. Science', 'AI'],
+    tags: ['Machine Learning', 'Computer Science'],
     abstract: 'A comprehensive review of the latest convolutional neural network architectures applied to MRI and CT scan analysis...',
     isSaved: false,
     citations: 312,
@@ -72,7 +98,7 @@ export const MOCK_PREPRINTS: Preprint[] = [
     authors: ['Dr. Julian Rivers', 'S. Martinez'],
     source: 'PhilPapers',
     date: 'Nov 02, 2023',
-    tags: ['Philosophy', 'AI Ethics'],
+    tags: ['Ethics', 'Philosophy of Mind'],
     abstract: 'This paper examines the moral status of synthetic entities through the lens of classical phenomenology...',
     isSaved: false,
     citations: 45,
@@ -85,7 +111,7 @@ export const MOCK_PREPRINTS: Preprint[] = [
     authors: ['H. Tanaka', 'L. Schmidt'],
     source: 'OA Journals',
     date: 'Oct 30, 2023',
-    tags: ['Environmental', 'Economics'],
+    tags: ['Physical Sciences', 'Economics'],
     abstract: 'Synthesizing data from over 500 peer-reviewed studies to identify key drivers of the green transition...',
     isSaved: true,
     citations: 128,
