@@ -199,6 +199,22 @@ export const MOCK_NOTIFICATIONS: Notification[] = [
     title: 'Collaborator added a paper',
     description: 'Sarah Miller added "Low-latency Inference" to "Edge Computing Collection".',
     time: '5h ago'
+  },
+  {
+    id: '4',
+    type: 'comment',
+    title: 'New comment on your paper',
+    description: 'Dr. Aris Thorne: "The glial support mechanism is a fascinating addition to the model."',
+    time: '1h ago',
+    isNew: true
+  },
+  {
+    id: '5',
+    type: 'comment',
+    title: 'Reply to your comment',
+    description: 'Dr. Elena Kovac replied to your comment on "Quantum Error Correction".',
+    time: '45m ago',
+    isNew: true
   }
 ];
 

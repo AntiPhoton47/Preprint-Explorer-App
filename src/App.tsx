@@ -50,12 +50,16 @@ import {
   AlertTriangle,
   BellOff,
   List,
+  Globe,
+  Twitter,
+  Linkedin,
   LogIn,
   LogOut,
   Building2,
   Mail,
   CheckCircle2,
-  Check
+  Check,
+  FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -102,7 +106,7 @@ import {
 
 import { storageService } from './services/storageService';
 
-type Screen = 'login' | 'register' | 'home' | 'library' | 'collections' | 'collection-detail' | 'reader' | 'profile' | 'notifications' | 'trends' | 'edit-profile' | 'share' | 'feeds' | 'notification-settings' | 'daily-digest' | 'weekly-digest' | 'topic-insight' | 'security-settings' | 'change-password' | '2fa-setup' | '2fa-backup' | 'security-log' | 'user-profile' | 'tag-results' | 'institution-detail' | 'legal';
+type Screen = 'login' | 'register' | 'home' | 'library' | 'collections' | 'collection-detail' | 'reader' | 'profile' | 'notifications' | 'trends' | 'edit-profile' | 'share' | 'feeds' | 'notification-settings' | 'daily-digest' | 'weekly-digest' | 'topic-insight' | 'security-settings' | 'change-password' | '2fa-setup' | '2fa-backup' | 'security-log' | 'user-profile' | 'tag-results' | 'institution-detail' | 'legal' | 'encryption-keys' | 'trusted-devices' | 'help' | 'contact';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -122,6 +126,9 @@ export default function App() {
   const [pushNotification, setPushNotification] = useState<{ title: string, body: string } | null>(null);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'info' } | null>(null);
   const [isCitationModalOpen, setIsCitationModalOpen] = useState(false);
+  const [showOutline, setShowOutline] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const showToast = (message: string, type: 'success' | 'info' = 'success') => {
     setToast({ message, type });
@@ -370,11 +377,13 @@ export default function App() {
           onAuthorClick={handleUserClick}
           showToast={showToast}
           onCite={() => setIsCitationModalOpen(true)}
+          showOutline={showOutline}
+          setShowOutline={setShowOutline}
         />
       );
       case 'profile': return <ProfileScreen onEdit={() => navigateTo('edit-profile')} onSettings={() => navigateTo('notification-settings')} onSignOut={() => { setIsLoggedIn(false); setCurrentScreen('login'); setNavigationHistory([]); }} onInstitutionClick={handleInstitutionClick} preprints={allPreprints} showToast={showToast} />;
       case 'edit-profile': return <EditProfileScreen onBack={goBack} showToast={showToast} />;
-      case 'notification-settings': return <SettingsScreen onBack={goBack} onNavigate={(s: Screen) => navigateTo(s)} onLegal={(type) => { setLegalType(type); navigateTo('legal'); }} showToast={showToast} />;
+      case 'notification-settings': return <SettingsScreen onBack={goBack} onNavigate={(s: Screen) => navigateTo(s)} onLegal={(type) => { setLegalType(type); navigateTo('legal'); }} showToast={showToast} onSignOut={() => { setIsLoggedIn(false); setCurrentScreen('login'); setNavigationHistory([]); }} />;
       case 'change-password': return <ChangePasswordScreen onBack={goBack} showToast={showToast} />;
       case '2fa-setup': return <TwoFactorAuthScreen onBack={goBack} onNext={() => navigateTo('2fa-backup')} showToast={showToast} />;
       case '2fa-backup': return <TwoFactorBackupCodesScreen onBack={goBack} onDone={() => navigateTo('notification-settings')} showToast={showToast} />;
@@ -427,6 +436,10 @@ export default function App() {
       );
       case 'legal': return <LegalScreen type={legalType} onBack={goBack} />;
       case 'feeds': return <CustomFeedsScreen onBack={goBack} showToast={showToast} />;
+      case 'encryption-keys': return <EncryptionKeysScreen onBack={goBack} showToast={showToast} />;
+      case 'trusted-devices': return <TrustedDevicesScreen onBack={goBack} showToast={showToast} />;
+      case 'help': return <HelpScreen onBack={goBack} />;
+      case 'contact': return <ContactScreen onBack={goBack} showToast={showToast} />;
       default: return <HomeScreen onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }} savedPreprints={savedPreprints} onToggleSave={toggleSave} searchQuery={searchQuery} onTagClick={handleTagClick} preprints={allPreprints} showToast={showToast} />;
     }
   };
@@ -500,11 +513,42 @@ export default function App() {
           )}
         </AnimatePresence>
 
+        {/* Share Modal */}
+        <AnimatePresence>
+          {showShareModal && selectedPreprint && (
+            <ShareModal 
+              preprint={selectedPreprint} 
+              onClose={() => setShowShareModal(false)} 
+              showToast={showToast}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* Sidebar */}
+        <AnimatePresence>
+          {isSidebarOpen && (
+            <>
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsSidebarOpen(false)}
+                className="absolute inset-0 bg-black/40 backdrop-blur-sm z-[140]"
+              />
+              <Sidebar 
+                onClose={() => setIsSidebarOpen(false)} 
+                onNavigate={(s) => { setIsSidebarOpen(false); navigateTo(s); }}
+                onLegal={(type) => { setIsSidebarOpen(false); setLegalType(type); navigateTo('legal'); }}
+              />
+            </>
+          )}
+        </AnimatePresence>
+
         {/* Header */}
         {['home', 'library', 'notifications', 'trends', 'profile', 'feeds'].includes(currentScreen) ? (
           <header className="shrink-0 bg-white dark:bg-background-dark border-b border-slate-200 dark:border-slate-800 p-4">
             <div className="flex items-center justify-between mb-4">
-              <Menu className="text-primary cursor-pointer" />
+              <Menu className="text-primary cursor-pointer" onClick={() => setIsSidebarOpen(true)} />
               <h1 className="text-lg font-bold tracking-tight">Preprint Explorer</h1>
               <div className="flex items-center gap-2">
                 <button onClick={toggleDarkMode} className="p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800">
@@ -567,9 +611,14 @@ export default function App() {
         ) : currentScreen === 'reader' ? (
           <nav className="shrink-0 bg-white dark:bg-background-dark border-t border-slate-200 dark:border-slate-800 flex justify-around p-3 pb-6">
             <NavItem icon={<BookOpen />} label="Read" active={true} onClick={() => {}} />
-            <NavItem icon={<Menu />} label="Outline" active={false} onClick={() => showToast('Outline feature coming soon!')} />
-            <NavItem icon={<Share2 />} label="Share" active={false} onClick={() => showToast('Paper shared to your network!')} />
-            <NavItem icon={<Download />} label="PDF" active={false} onClick={() => showToast('Downloading PDF version...')} />
+            <NavItem icon={<Menu />} label="Outline" active={false} onClick={() => setShowOutline(true)} />
+            <NavItem icon={<Share2 />} label="Share" active={false} onClick={() => setShowShareModal(true)} />
+            <NavItem icon={<Download />} label="PDF" active={false} onClick={() => {
+              showToast('Preparing PDF for download...');
+              setTimeout(() => {
+                showToast('Download started: ' + (selectedPreprint?.title.substring(0, 20) || 'paper') + '.pdf');
+              }, 1500);
+            }} />
           </nav>
         ) : null}
       </div>
@@ -1811,6 +1860,141 @@ function CollectionDetailScreen({ collection, onBack, savedPreprints, onToggleSa
   );
 }
 
+function ShareModal({ preprint, onClose, showToast }: { preprint: Preprint, onClose: () => void, showToast: (msg: string) => void }) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
+
+  const filteredUsers = MOCK_USERS.filter(u => 
+    u.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    u.affiliation.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const handleShareInternal = () => {
+    if (selectedUsers.length === 0) return;
+    showToast(`Shared with ${selectedUsers.length} researchers!`);
+    onClose();
+  };
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(`https://researchflow.io/paper/${preprint.id}`);
+    showToast('Link copied to clipboard!');
+  };
+
+  const toggleUser = (userId: string) => {
+    setSelectedUsers(prev => 
+      prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4">
+      <motion.div 
+        initial={{ y: '100%' }}
+        animate={{ y: 0 }}
+        exit={{ y: '100%' }}
+        className="bg-white dark:bg-slate-900 w-full max-w-md rounded-t-3xl md:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+      >
+        <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <div>
+            <h3 className="text-xl font-bold">Share Research</h3>
+            <p className="text-xs text-slate-500 mt-1 truncate max-w-[250px]">{preprint.title}</p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full">
+            <X className="size-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar">
+          {/* Internal Sharing */}
+          <div>
+            <h4 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-4">Share with Network</h4>
+            <div className="relative mb-4">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 size-4" />
+              <input 
+                type="text" 
+                placeholder="Search researchers or labs..."
+                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl py-2.5 pl-10 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/50"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <div className="space-y-3 max-h-48 overflow-y-auto no-scrollbar">
+              {filteredUsers.map(user => (
+                <div 
+                  key={user.id} 
+                  onClick={() => toggleUser(user.id)}
+                  className={`flex items-center justify-between p-2 rounded-xl border transition-all cursor-pointer ${selectedUsers.includes(user.id) ? 'border-primary bg-primary/5' : 'border-transparent hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+                >
+                  <div className="flex items-center gap-3">
+                    <img src={user.imageUrl} alt={user.name} className="size-8 rounded-full" referrerPolicy="no-referrer" />
+                    <div>
+                      <p className="text-sm font-bold">{user.name}</p>
+                      <p className="text-[10px] text-slate-500">{user.affiliation}</p>
+                    </div>
+                  </div>
+                  <div className={`size-5 rounded-full border flex items-center justify-center ${selectedUsers.includes(user.id) ? 'bg-primary border-primary' : 'border-slate-300'}`}>
+                    {selectedUsers.includes(user.id) && <Check className="size-3 text-white" />}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button 
+              onClick={handleShareInternal}
+              disabled={selectedUsers.length === 0}
+              className="w-full mt-4 bg-primary text-white font-bold py-3 rounded-xl shadow-lg shadow-primary/20 disabled:opacity-50 active:scale-95 transition-all"
+            >
+              Share with {selectedUsers.length || 'Network'}
+            </button>
+          </div>
+
+          {/* External Sharing */}
+          <div>
+            <h4 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-4">External Channels</h4>
+            <div className="grid grid-cols-4 gap-4">
+              <button 
+                onClick={handleCopyLink}
+                className="flex flex-col items-center gap-2 group"
+              >
+                <div className="size-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400 group-hover:bg-primary group-hover:text-white transition-all">
+                  <Copy className="size-5" />
+                </div>
+                <span className="text-[10px] font-bold uppercase">Copy</span>
+              </button>
+              <button 
+                onClick={() => { showToast('Redirecting to Twitter...'); onClose(); }}
+                className="flex flex-col items-center gap-2 group"
+              >
+                <div className="size-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400 group-hover:bg-[#1DA1F2] group-hover:text-white transition-all">
+                  <Twitter className="size-5" />
+                </div>
+                <span className="text-[10px] font-bold uppercase">Twitter</span>
+              </button>
+              <button 
+                onClick={() => { showToast('Redirecting to LinkedIn...'); onClose(); }}
+                className="flex flex-col items-center gap-2 group"
+              >
+                <div className="size-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400 group-hover:bg-[#0A66C2] group-hover:text-white transition-all">
+                  <Linkedin className="size-5" />
+                </div>
+                <span className="text-[10px] font-bold uppercase">LinkedIn</span>
+              </button>
+              <button 
+                onClick={() => { showToast('Opening Email Client...'); onClose(); }}
+                className="flex flex-col items-center gap-2 group"
+              >
+                <div className="size-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400 group-hover:bg-emerald-500 group-hover:text-white transition-all">
+                  <Mail className="size-5" />
+                </div>
+                <span className="text-[10px] font-bold uppercase">Email</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function UserListModal({ title, users, onClose }: { title: string, users: string[], onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1845,7 +2029,7 @@ function UserListModal({ title, users, onClose }: { title: string, users: string
   );
 }
 
-function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagClick, onAuthorClick, showToast, onCite }: { 
+function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagClick, onAuthorClick, showToast, onCite, showOutline, setShowOutline }: { 
   preprint: Preprint, 
   onBack: () => void,
   onToggleSave: (p: Preprint) => void, 
@@ -1854,13 +2038,14 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
   onTagClick: (tag: string) => void,
   onAuthorClick: (author: string) => void,
   showToast: (msg: string) => void,
-  onCite: () => void
+  onCite: () => void,
+  showOutline: boolean,
+  setShowOutline: (show: boolean) => void
 }) {
   const [readerTheme, setReaderTheme] = useState<'light' | 'dark' | 'sepia'>('light');
   const [commentText, setCommentText] = useState('');
   const [comments, setComments] = useState<PaperComment[]>(preprint.comments || []);
   const [userListModal, setUserListModal] = useState<{ title: string, users: string[] } | null>(null);
-  const [showOutline, setShowOutline] = useState(false);
 
   const handleRateWithToast = (rating: number) => {
     onRate(rating);
@@ -1870,19 +2055,6 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
   const handleToggleSaveWithToast = () => {
     onToggleSave(preprint);
     showToast(isSaved ? 'Removed from library' : 'Saved to library for offline reading');
-  };
-
-  const handleDownload = () => {
-    showToast('Preparing PDF for download...');
-    setTimeout(() => {
-      showToast('Download started: ' + preprint.title.substring(0, 20) + '.pdf');
-    }, 1500);
-  };
-
-  const handleShare = () => {
-    const shareUrl = `https://researchflow.io/paper/${preprint.id}`;
-    navigator.clipboard.writeText(shareUrl);
-    showToast('Share link copied to clipboard!');
   };
 
   const handleAddComment = () => {
@@ -2134,34 +2306,6 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
         />
       )}
 
-      {/* Floating Action Bar */}
-      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-40">
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-2 flex items-center gap-1 backdrop-blur-md bg-opacity-90">
-          <button 
-            onClick={() => setShowOutline(true)}
-            className="p-3 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors flex flex-col items-center gap-1"
-          >
-            <List className="size-5 text-slate-600 dark:text-slate-400" />
-            <span className="text-[10px] font-bold uppercase tracking-tighter">Outline</span>
-          </button>
-          <div className="w-px h-8 bg-slate-200 dark:bg-slate-800 mx-1"></div>
-          <button 
-            onClick={handleShare}
-            className="p-3 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors flex flex-col items-center gap-1"
-          >
-            <Share2 className="size-5 text-slate-600 dark:text-slate-400" />
-            <span className="text-[10px] font-bold uppercase tracking-tighter">Share</span>
-          </button>
-          <button 
-            onClick={handleDownload}
-            className="p-3 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors flex flex-col items-center gap-1"
-          >
-            <Download className="size-5 text-slate-600 dark:text-slate-400" />
-            <span className="text-[10px] font-bold uppercase tracking-tighter">PDF</span>
-          </button>
-        </div>
-      </div>
-
       {/* Outline Modal */}
       <AnimatePresence>
         {showOutline && (
@@ -2221,6 +2365,7 @@ function ProfileScreen({ onEdit, onSettings, onSignOut, onInstitutionClick, prep
     { icon: <Share2 />, label: 'Twitter' }
   ]);
   const [newNetworkLabel, setNewNetworkLabel] = useState('');
+  const [userListModal, setUserListModal] = useState<{ title: string, users: string[] } | null>(null);
 
   const userPublications = preprints.filter(p => p.authors.some(a => a.includes('Aris Thorne')));
 
@@ -2269,11 +2414,17 @@ function ProfileScreen({ onEdit, onSettings, onSignOut, onInstitutionClick, prep
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-8">
-        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center">
+        <div 
+          onClick={() => showToast('Viewing your preprints...')}
+          className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+        >
           <p className="text-2xl font-bold text-primary">{userPublications.length}</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Preprints</p>
         </div>
-        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center">
+        <div 
+          onClick={() => setUserListModal({ title: 'Your Citations', users: ['Dr. Elena Kovac', 'Prof. Marcus Thorne', 'Sarah Miller', 'Dr. Aris Thorne'] })}
+          className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+        >
           <p className="text-2xl font-bold text-primary">1.2k</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Citations</p>
         </div>
@@ -2288,13 +2439,19 @@ function ProfileScreen({ onEdit, onSettings, onSignOut, onInstitutionClick, prep
       </div>
 
       <div className="flex items-center justify-center gap-8 mb-8 text-center">
-        <div>
-          <p className="text-lg font-bold">1,240</p>
+        <div 
+          onClick={() => setUserListModal({ title: 'Your Followers', users: ['Dr. Elena Kovac', 'Prof. Marcus Thorne', 'Sarah Miller'] })}
+          className="cursor-pointer group"
+        >
+          <p className="text-lg font-bold group-hover:text-primary transition-colors">1,240</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Followers</p>
         </div>
         <div className="w-px h-8 bg-slate-200 dark:bg-slate-700"></div>
-        <div>
-          <p className="text-lg font-bold">482</p>
+        <div 
+          onClick={() => setUserListModal({ title: 'Following', users: ['Dr. Elena Kovac', 'Prof. Marcus Thorne', 'Sarah Miller'] })}
+          className="cursor-pointer group"
+        >
+          <p className="text-lg font-bold group-hover:text-primary transition-colors">482</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Following</p>
         </div>
       </div>
@@ -2395,13 +2552,13 @@ function ProfileScreen({ onEdit, onSettings, onSignOut, onInstitutionClick, prep
         </AnimatePresence>
       </div>
 
-      <button 
-        onClick={onSignOut}
-        className="w-full py-4 bg-red-50 dark:bg-red-900/10 text-red-500 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-red-100 transition-colors"
-      >
-        <LogOut className="size-5" />
-        Sign Out of Account
-      </button>
+      {userListModal && (
+        <UserListModal 
+          title={userListModal.title} 
+          users={userListModal.users} 
+          onClose={() => setUserListModal(null)} 
+        />
+      )}
     </div>
   );
 }
@@ -3020,6 +3177,7 @@ function NotificationItem({ notification }: { notification: Notification, key?: 
       case 'feed': return <Rss className="size-6" />;
       case 'citation': return <Quote className="size-6" />;
       case 'collab': return <UserPlus className="size-6" />;
+      case 'comment': return <MessageSquare className="size-6" />;
       default: return <Bell className="size-6" />;
     }
   };
@@ -3029,6 +3187,7 @@ function NotificationItem({ notification }: { notification: Notification, key?: 
       case 'feed': return 'bg-blue-600 text-white';
       case 'citation': return 'bg-emerald-100 text-emerald-600';
       case 'collab': return 'bg-amber-100 text-amber-600';
+      case 'comment': return 'bg-indigo-100 text-indigo-600';
       default: return 'bg-slate-100 text-slate-600';
     }
   };
@@ -3762,7 +3921,7 @@ function ShareScreen({ onBack, showToast }: { onBack: () => void, showToast: (ms
   );
 }
 
-function SettingsScreen({ onBack, onNavigate, onLegal, showToast }: { onBack: () => void, onNavigate: (s: Screen) => void, onLegal: (type: 'tos' | 'privacy') => void, showToast: (msg: string) => void }) {
+function SettingsScreen({ onBack, onNavigate, onLegal, showToast, onSignOut }: { onBack: () => void, onNavigate: (s: Screen) => void, onLegal: (type: 'tos' | 'privacy') => void, showToast: (msg: string) => void, onSignOut: () => void }) {
   const [activeTab, setActiveTab] = useState<'notifications' | 'security'>('notifications');
   const [settings, setSettings] = useState({
     pushEnabled: true,
@@ -3924,6 +4083,18 @@ function SettingsScreen({ onBack, onNavigate, onLegal, showToast }: { onBack: ()
                   onClick={() => onNavigate('2fa-setup')}
                 />
                 <SecurityOption 
+                  icon={<Key className="size-5" />}
+                  title="Encryption Keys"
+                  description="Manage your end-to-end encryption keys"
+                  onClick={() => onNavigate('encryption-keys')}
+                />
+                <SecurityOption 
+                  icon={<Smartphone className="size-5" />}
+                  title="Trusted Devices"
+                  description="Manage devices that can access your account"
+                  onClick={() => onNavigate('trusted-devices')}
+                />
+                <SecurityOption 
                   icon={<History className="size-5" />}
                   title="Recent Activity"
                   description="Review recent logins and security events"
@@ -3935,23 +4106,33 @@ function SettingsScreen({ onBack, onNavigate, onLegal, showToast }: { onBack: ()
 
             <section className="mb-6">
               <div className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                Data Protection
+                Support
               </div>
               <div className="bg-white dark:bg-slate-900 border-y border-slate-200 dark:border-slate-800">
                 <SecurityOption 
-                  icon={<Lock className="size-5" />}
-                  title="Encryption Keys"
-                  description="Manage your end-to-end encryption settings"
-                  onClick={() => showToast('Encryption key management coming soon!')}
+                  icon={<HelpCircle className="size-5" />}
+                  title="Help Center"
+                  description="Find answers to common questions"
+                  onClick={() => onNavigate('help')}
                 />
                 <SecurityOption 
-                  icon={<Smartphone className="size-5" />}
-                  title="Trusted Devices"
-                  description="Manage devices that can access your lab results"
-                  onClick={() => showToast('Trusted devices management coming soon!')}
+                  icon={<MessageSquare className="size-5" />}
+                  title="Contact Us"
+                  description="Get in touch with our support team"
+                  onClick={() => onNavigate('contact')}
                   showDivider={false}
                 />
               </div>
+            </section>
+
+            <section className="px-4 mt-8">
+              <button 
+                onClick={onSignOut}
+                className="w-full py-4 bg-red-50 dark:bg-red-900/10 text-red-500 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-red-100 transition-colors"
+              >
+                <LogOut className="size-5" />
+                Sign Out of Account
+              </button>
             </section>
 
             <div className="px-8 py-6 text-center space-y-4">
@@ -4347,6 +4528,119 @@ function TwoFactorBackupCodesScreen({ onBack, onDone, showToast }: { onBack: () 
   );
 }
 
+function EncryptionKeysScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
+  const [keys, setKeys] = useState([
+    { id: '1', name: 'Primary Research Key', created: '2023-10-15', status: 'Active' },
+    { id: '2', name: 'Backup Recovery Key', created: '2023-05-20', status: 'Stored' }
+  ]);
+
+  const handleRotateKey = (id: string) => {
+    showToast('Rotating encryption key...');
+    setTimeout(() => showToast('Key rotated successfully!'), 1500);
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950">
+      <header className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center gap-4 sticky top-0 z-10">
+        <ArrowLeft className="cursor-pointer" onClick={onBack} />
+        <h2 className="text-xl font-bold">Encryption Keys</h2>
+      </header>
+      <div className="p-6 space-y-6 overflow-y-auto no-scrollbar">
+        <div className="bg-blue-50 dark:bg-blue-900/10 p-4 rounded-2xl border border-blue-100 dark:border-blue-800 flex gap-3">
+          <Shield className="size-5 text-blue-500 shrink-0" />
+          <p className="text-xs text-blue-700 dark:text-blue-300 leading-relaxed">
+            Your research data is protected by end-to-end encryption. Only you hold the keys to decrypt your private lab notes and unpublished drafts.
+          </p>
+        </div>
+
+        <div className="space-y-4">
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-2">Active Keys</h3>
+          {keys.map(key => (
+            <div key={key.id} className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold">{key.name}</p>
+                <p className="text-[10px] text-slate-500">Created: {key.created} • Status: {key.status}</p>
+              </div>
+              <button 
+                onClick={() => handleRotateKey(key.id)}
+                className="p-2 text-primary hover:bg-primary/5 rounded-lg transition-colors"
+              >
+                <History className="size-5" />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <button 
+          onClick={() => showToast('Generating new master key...')}
+          className="w-full py-4 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-2xl text-slate-400 font-bold text-sm flex items-center justify-center gap-2 hover:border-primary hover:text-primary transition-colors"
+        >
+          <Plus className="size-5" />
+          Generate New Key
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TrustedDevicesScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
+  const [devices, setDevices] = useState([
+    { id: '1', name: 'MacBook Pro 16"', type: 'Desktop', location: 'Zurich, Switzerland', lastActive: 'Now', isCurrent: true },
+    { id: '2', name: 'iPhone 15 Pro', type: 'Mobile', location: 'Zurich, Switzerland', lastActive: '2h ago', isCurrent: false },
+    { id: '3', name: 'iPad Air', type: 'Tablet', location: 'London, UK', lastActive: '3 days ago', isCurrent: false }
+  ]);
+
+  const handleRemoveDevice = (id: string) => {
+    setDevices(devices.filter(d => d.id !== id));
+    showToast('Device removed and access revoked.');
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950">
+      <header className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center gap-4 sticky top-0 z-10">
+        <ArrowLeft className="cursor-pointer" onClick={onBack} />
+        <h2 className="text-xl font-bold">Trusted Devices</h2>
+      </header>
+      <div className="p-6 space-y-6 overflow-y-auto no-scrollbar">
+        <div className="space-y-4">
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-2">Authorized Devices</h3>
+          {devices.map(device => (
+            <div key={device.id} className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="size-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500">
+                  {device.type === 'Desktop' ? <Building2 className="size-5" /> : <Smartphone className="size-5" />}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-bold">{device.name}</p>
+                    {device.isCurrent && <span className="text-[8px] bg-emerald-100 text-emerald-600 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter">Current</span>}
+                  </div>
+                  <p className="text-[10px] text-slate-500">{device.location} • {device.lastActive}</p>
+                </div>
+              </div>
+              {!device.isCurrent && (
+                <button 
+                  onClick={() => handleRemoveDevice(device.id)}
+                  className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                >
+                  <X className="size-5" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="p-4 bg-amber-50 dark:bg-amber-900/10 rounded-2xl border border-amber-100 dark:border-amber-800 flex gap-3">
+          <AlertTriangle className="size-5 text-amber-500 shrink-0" />
+          <p className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
+            Removing a device will immediately log it out and revoke its access to your research vault. You will need to re-authorize it using 2FA.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SecurityLogScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
   const logs = [
     { id: 1, type: 'login', title: 'Logged in', device: 'Chrome on Windows', location: 'New York, USA', time: 'Today at 10:45 AM', current: true },
@@ -4427,6 +4721,206 @@ function SecurityLogScreen({ onBack, showToast }: { onBack: () => void, showToas
               <p className="text-sm text-slate-500">
                 Don't recognize an activity? <button onClick={() => showToast('Security check initiated')} className="text-primary font-bold">Secure your account</button>
               </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Sidebar({ onClose, onNavigate, onLegal }: { 
+  onClose: () => void, 
+  onNavigate: (s: Screen) => void,
+  onLegal: (type: 'tos' | 'privacy') => void
+}) {
+  return (
+    <motion.div 
+      initial={{ x: '-100%' }}
+      animate={{ x: 0 }}
+      exit={{ x: '-100%' }}
+      transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+      className="absolute inset-y-0 left-0 w-80 bg-white dark:bg-slate-900 z-[150] shadow-2xl flex flex-col"
+    >
+      <div className="p-6 border-b border-slate-100 dark:border-slate-800">
+        <div className="flex items-center gap-4 mb-6">
+          <img 
+            src="https://picsum.photos/seed/profile/200/200" 
+            alt="Profile" 
+            className="size-16 rounded-full border-2 border-primary/10 object-cover"
+          />
+          <div>
+            <h3 className="text-lg font-bold">Dr. Aris Thorne</h3>
+            <p className="text-xs text-slate-500">aris.thorne@uzh.ch</p>
+          </div>
+        </div>
+        <div className="flex gap-4">
+          <div className="text-center">
+            <p className="text-sm font-bold text-primary">1.2k</p>
+            <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Followers</p>
+          </div>
+          <div className="text-center">
+            <p className="text-sm font-bold text-primary">482</p>
+            <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Following</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-2 no-scrollbar">
+        <SidebarItem icon={<Bell />} label="Alerts" onClick={() => onNavigate('notifications')} />
+        <SidebarItem icon={<TrendingUp />} label="Trends" onClick={() => onNavigate('trends')} />
+        <SidebarItem icon={<LibraryIcon />} label="Library" onClick={() => onNavigate('library')} />
+        <SidebarItem icon={<Settings />} label="Profile Settings" onClick={() => onNavigate('notification-settings')} />
+        
+        <div className="h-px bg-slate-100 dark:bg-slate-800 my-4"></div>
+        
+        <SidebarItem icon={<FileText />} label="Terms of Service" onClick={() => onLegal('tos')} />
+        <SidebarItem icon={<Shield />} label="Privacy Policy" onClick={() => onLegal('privacy')} />
+        <SidebarItem icon={<HelpCircle />} label="Help" onClick={() => onNavigate('help')} />
+        <SidebarItem icon={<MessageSquare />} label="App Contact" onClick={() => onNavigate('contact')} />
+      </div>
+
+      <div className="p-6 border-t border-slate-100 dark:border-slate-800">
+        <button 
+          onClick={() => { onClose(); onNavigate('login'); }}
+          className="flex items-center gap-3 text-red-500 font-bold text-sm"
+        >
+          <LogOut className="size-5" />
+          Sign Out
+        </button>
+      </div>
+      
+      <button 
+        onClick={onClose}
+        className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+      >
+        <X className="size-6" />
+      </button>
+    </motion.div>
+  );
+}
+
+function SidebarItem({ icon, label, onClick }: { icon: React.ReactNode, label: string, onClick: () => void }) {
+  return (
+    <button 
+      onClick={onClick}
+      className="w-full flex items-center gap-4 p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-slate-700 dark:text-slate-300"
+    >
+      <div className="text-primary">{icon}</div>
+      <span className="text-sm font-bold">{label}</span>
+    </button>
+  );
+}
+
+function HelpScreen({ onBack }: { onBack: () => void }) {
+  const faqs = [
+    { q: 'How do I save a preprint?', a: 'Tap the bookmark icon on any paper card or in the reader view to save it to your library.' },
+    { q: 'Can I download papers for offline reading?', a: 'Yes, papers you save to your library are automatically cached for offline access. You can also download them as PDF.' },
+    { q: 'How do I follow an author?', a: 'Visit an author\'s profile and tap the "Follow" button to receive alerts when they publish new work.' },
+    { q: 'What are custom feeds?', a: 'Custom feeds allow you to track specific keywords or topics across multiple preprint servers in real-time.' }
+  ];
+
+  return (
+    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950">
+      <header className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center gap-4 sticky top-0 z-10">
+        <ArrowLeft className="cursor-pointer" onClick={onBack} />
+        <h2 className="text-xl font-bold">Help Center</h2>
+      </header>
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 no-scrollbar">
+        <div className="bg-primary/10 p-6 rounded-3xl border border-primary/20 text-center">
+          <HelpCircle className="size-12 text-primary mx-auto mb-4" />
+          <h3 className="text-lg font-bold mb-2">How can we help?</h3>
+          <p className="text-sm text-slate-600 dark:text-slate-400">Search our knowledge base or browse common topics below.</p>
+        </div>
+
+        <div className="space-y-4">
+          <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-2">Frequently Asked Questions</h4>
+          {faqs.map((faq, i) => (
+            <div key={i} className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
+              <p className="text-sm font-bold mb-2">{faq.q}</p>
+              <p className="text-xs text-slate-500 leading-relaxed">{faq.a}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="p-6 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 text-center">
+          <p className="text-sm font-bold mb-4">Still need assistance?</p>
+          <button className="w-full py-3 bg-primary text-white font-bold rounded-xl shadow-lg shadow-primary/20">
+            Chat with Support
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ContactScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
+  const [subject, setSubject] = useState('');
+  const [message, setMessage] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    showToast('Message sent! Our team will get back to you soon.');
+    onBack();
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950">
+      <header className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center gap-4 sticky top-0 z-10">
+        <ArrowLeft className="cursor-pointer" onClick={onBack} />
+        <h2 className="text-xl font-bold">Contact Us</h2>
+      </header>
+      <div className="flex-1 overflow-y-auto p-6 no-scrollbar">
+        <div className="mb-8">
+          <h3 className="text-lg font-bold mb-2">Get in touch</h3>
+          <p className="text-sm text-slate-500">Have a bug to report or a feature request? We'd love to hear from you.</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase tracking-widest text-slate-400 px-1">Subject</label>
+            <input 
+              type="text" 
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="e.g. Bug Report"
+              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4 text-sm outline-none focus:ring-2 focus:ring-primary/50"
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase tracking-widest text-slate-400 px-1">Message</label>
+            <textarea 
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Tell us more..."
+              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4 text-sm outline-none focus:ring-2 focus:ring-primary/50 min-h-[200px]"
+              required
+            />
+          </div>
+          <button 
+            type="submit"
+            className="w-full py-4 bg-primary text-white font-bold rounded-2xl shadow-lg shadow-primary/20 flex items-center justify-center gap-2"
+          >
+            <Mail className="size-5" />
+            Send Message
+          </button>
+        </form>
+
+        <div className="mt-12 pt-8 border-t border-slate-200 dark:border-slate-800">
+          <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-4 text-center">Other ways to connect</h4>
+          <div className="flex justify-center gap-6">
+            <div className="flex flex-col items-center gap-2">
+              <div className="size-12 rounded-full bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center text-blue-500">
+                <Twitter className="size-6" />
+              </div>
+              <span className="text-[10px] font-bold">Twitter</span>
+            </div>
+            <div className="flex flex-col items-center gap-2">
+              <div className="size-12 rounded-full bg-slate-50 dark:bg-slate-900/20 flex items-center justify-center text-slate-500">
+                <Globe className="size-6" />
+              </div>
+              <span className="text-[10px] font-bold">Website</span>
             </div>
           </div>
         </div>

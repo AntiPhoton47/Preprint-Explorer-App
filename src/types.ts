@@ -88,7 +88,7 @@ export interface CustomFeed {
 
 export interface Notification {
   id: string;
-  type: 'feed' | 'citation' | 'collab' | 'share';
+  type: 'feed' | 'citation' | 'collab' | 'share' | 'comment';
   title: string;
   description: string;
   time: string;
