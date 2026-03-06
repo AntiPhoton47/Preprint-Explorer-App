@@ -1,4 +1,31 @@
-import { Preprint, Collection, Notification, CustomFeed, TrendMetric, RisingStar, DigestPaper, DigestActivity, User, Institution } from './types';
+import { Preprint, Collection, Notification, CustomFeed, TrendMetric, RisingStar, DigestPaper, DigestActivity, User, Institution, Chat } from './types';
+
+export const MOCK_CHATS: Chat[] = [
+  {
+    id: 'chat1',
+    participants: ['aris_thorne', 'dr_smith'],
+    lastMessage: 'The scaling analysis in Section 4 is particularly insightful.',
+    lastMessageTime: '2h ago',
+    unreadCount: 1,
+    messages: [
+      { id: 'm1', senderId: 'dr_smith', text: 'Hello Dr. Thorne, I read your latest preprint.', timestamp: '10:00 AM' },
+      { id: 'm2', senderId: 'aris_thorne', text: 'Thank you Dr. Smith! Any thoughts on the methodology?', timestamp: '10:05 AM' },
+      { id: 'm3', senderId: 'dr_smith', text: 'The scaling analysis in Section 4 is particularly insightful.', timestamp: '10:15 AM' }
+    ]
+  },
+  {
+    id: 'chat2',
+    participants: ['aris_thorne', 'prof_wilson'],
+    lastMessage: 'Looking forward to our collaboration.',
+    lastMessageTime: '1d ago',
+    unreadCount: 0,
+    messages: [
+      { id: 'm4', senderId: 'prof_wilson', text: 'Are you available for a quick call tomorrow?', timestamp: 'Yesterday' },
+      { id: 'm5', senderId: 'aris_thorne', text: 'Yes, around 2 PM works for me.', timestamp: 'Yesterday' },
+      { id: 'm6', senderId: 'prof_wilson', text: 'Looking forward to our collaboration.', timestamp: 'Yesterday' }
+    ]
+  }
+];
 
 export const MOCK_PREPRINTS: Preprint[] = [
   {

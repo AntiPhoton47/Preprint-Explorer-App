@@ -34,6 +34,8 @@ import {
   Calendar,
   Clock,
   PlusCircle,
+  BookMarked,
+  User as UserIcon,
   X,
   Sun,
   Moon,
@@ -59,7 +61,14 @@ import {
   Mail,
   CheckCircle2,
   Check,
-  FileText
+  FileText,
+  Users,
+  Phone,
+  Video,
+  Info,
+  Paperclip,
+  Send,
+  BarChart3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -88,7 +97,8 @@ import {
   MOCK_PUBLICATION_VOLUME,
   MOCK_WEEKLY_TRENDS,
   MOCK_USERS,
-  MOCK_INSTITUTIONS
+  MOCK_INSTITUTIONS,
+  MOCK_CHATS
 } from './mockData';
 import { 
   Preprint, 
@@ -101,12 +111,14 @@ import {
   TrendMetric, 
   RisingStar, 
   DigestPaper, 
-  DigestActivity 
+  DigestActivity,
+  Chat,
+  Message
 } from './types';
 
 import { storageService } from './services/storageService';
 
-type Screen = 'login' | 'register' | 'home' | 'library' | 'collections' | 'collection-detail' | 'reader' | 'profile' | 'notifications' | 'trends' | 'edit-profile' | 'share' | 'feeds' | 'notification-settings' | 'daily-digest' | 'weekly-digest' | 'topic-insight' | 'security-settings' | 'change-password' | '2fa-setup' | '2fa-backup' | 'security-log' | 'user-profile' | 'tag-results' | 'institution-detail' | 'legal' | 'encryption-keys' | 'trusted-devices' | 'help' | 'contact';
+type Screen = 'login' | 'register' | 'home' | 'library' | 'collections' | 'collection-detail' | 'reader' | 'profile' | 'notifications' | 'trends' | 'edit-profile' | 'share' | 'feeds' | 'notification-settings' | 'daily-digest' | 'weekly-digest' | 'topic-insight' | 'security-settings' | 'change-password' | '2fa-setup' | '2fa-backup' | 'security-log' | 'user-profile' | 'tag-results' | 'institution-detail' | 'legal' | 'encryption-keys' | 'trusted-devices' | 'help' | 'contact' | 'chat' | 'chat-detail';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -118,6 +130,7 @@ export default function App() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [selectedInstitution, setSelectedInstitution] = useState<Institution | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
   const [legalType, setLegalType] = useState<'tos' | 'privacy'>('tos');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [savedPreprints, setSavedPreprints] = useState<Preprint[]>([]);
@@ -237,6 +250,25 @@ export default function App() {
     if (inst) {
       setSelectedInstitution(inst);
       navigateTo('institution-detail');
+    }
+  };
+
+  const handleMessageClick = (user: User) => {
+    // Find existing chat or create a new one
+    const existingChat = MOCK_CHATS.find(c => c.participants.includes(user.id));
+    if (existingChat) {
+      setSelectedChat(existingChat);
+      navigateTo('chat-detail');
+    } else {
+      const newChat: Chat = {
+        id: `chat-${Date.now()}`,
+        participants: ['aris_thorne', user.id],
+        unreadCount: 0,
+        messages: []
+      };
+      // In a real app we'd add it to state, here we just select it
+      setSelectedChat(newChat);
+      navigateTo('chat-detail');
     }
   };
 
@@ -389,7 +421,16 @@ export default function App() {
       case '2fa-backup': return <TwoFactorBackupCodesScreen onBack={goBack} onDone={() => navigateTo('notification-settings')} showToast={showToast} />;
       case 'security-log': return <SecurityLogScreen onBack={goBack} showToast={showToast} />;
       case 'notifications': return <NotificationsScreen onDailyDigest={() => navigateTo('daily-digest')} onWeeklyDigest={() => navigateTo('weekly-digest')} onBack={goBack} showToast={showToast} />;
-      case 'trends': return <TrendsScreen onTopicClick={() => navigateTo('topic-insight')} showToast={showToast} />;
+      case 'trends': return (
+        <TrendsScreen 
+          onTopicClick={() => navigateTo('topic-insight')} 
+          onAuthorClick={handleUserClick}
+          onTagClick={handleTagClick}
+          onInstitutionClick={handleInstitutionClick}
+          onSearch={(query) => { setSearchQuery(query); navigateTo('home'); }}
+          showToast={showToast} 
+        />
+      );
       case 'daily-digest': return <DailyDigestScreen onBack={goBack} showToast={showToast} />;
       case 'weekly-digest': return <WeeklyDigestScreen onBack={goBack} showToast={showToast} />;
       case 'topic-insight': return (
@@ -409,6 +450,7 @@ export default function App() {
           onToggleSave={toggleSave}
           onTagClick={handleTagClick}
           onInstitutionClick={handleInstitutionClick}
+          onMessage={handleMessageClick}
           savedPreprints={savedPreprints}
           showToast={showToast}
         />
@@ -440,6 +482,8 @@ export default function App() {
       case 'trusted-devices': return <TrustedDevicesScreen onBack={goBack} showToast={showToast} />;
       case 'help': return <HelpScreen onBack={goBack} />;
       case 'contact': return <ContactScreen onBack={goBack} showToast={showToast} />;
+      case 'chat': return <ChatScreen onChatClick={(chat) => { setSelectedChat(chat); navigateTo('chat-detail'); }} onBack={goBack} />;
+      case 'chat-detail': return <ChatDetailScreen chat={selectedChat!} onBack={goBack} showToast={showToast} />;
       default: return <HomeScreen onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }} savedPreprints={savedPreprints} onToggleSave={toggleSave} searchQuery={searchQuery} onTagClick={handleTagClick} preprints={allPreprints} showToast={showToast} />;
     }
   };
@@ -551,9 +595,6 @@ export default function App() {
               <Menu className="text-primary cursor-pointer" onClick={() => setIsSidebarOpen(true)} />
               <h1 className="text-lg font-bold tracking-tight">Preprint Explorer</h1>
               <div className="flex items-center gap-2">
-                <button onClick={toggleDarkMode} className="p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800">
-                  {isDarkMode ? <Eye className="size-5" /> : <EyeOff className="size-5" />}
-                </button>
                 <UserCircle className="cursor-pointer" onClick={() => setCurrentScreen('profile')} />
               </div>
             </div>
@@ -600,11 +641,12 @@ export default function App() {
         </main>
 
         {/* Bottom Nav */}
-        {['home', 'library', 'notifications', 'trends', 'profile', 'feeds', 'notification-settings', 'daily-digest', 'weekly-digest', 'topic-insight'].includes(currentScreen) ? (
+        {['home', 'library', 'notifications', 'trends', 'profile', 'feeds', 'notification-settings', 'daily-digest', 'weekly-digest', 'topic-insight', 'chat'].includes(currentScreen) ? (
           <nav className="shrink-0 bg-white dark:bg-background-dark border-t border-slate-200 dark:border-slate-800 flex items-center justify-around p-3 pb-6 relative">
             <NavItem icon={<Home />} label="Home" active={currentScreen === 'home'} onClick={() => setCurrentScreen('home')} />
             <NavItem icon={<Bell />} label="Alerts" active={currentScreen === 'notifications'} onClick={() => setCurrentScreen('notifications')} />
             <NavItem icon={<TrendingUp />} label="Trends" active={currentScreen === 'trends' || currentScreen === 'topic-insight'} onClick={() => setCurrentScreen('trends')} />
+            <NavItem icon={<MessageSquare />} label="Chat" active={currentScreen === 'chat' || currentScreen === 'chat-detail'} onClick={() => setCurrentScreen('chat')} />
             <NavItem icon={<LibraryIcon />} label="Library" active={currentScreen === 'library'} onClick={() => setCurrentScreen('library')} />
             <NavItem icon={<UserCircle />} label="Profile" active={currentScreen === 'profile' || currentScreen === 'notification-settings'} onClick={() => setCurrentScreen('profile')} />
           </nav>
@@ -2673,13 +2715,14 @@ function EditProfileScreen({ onBack, showToast }: { onBack: () => void, showToas
   );
 }
 
-function UserProfileScreen({ user, onBack, onPreprintClick, onToggleSave, onTagClick, onInstitutionClick, savedPreprints, showToast }: { 
+function UserProfileScreen({ user, onBack, onPreprintClick, onToggleSave, onTagClick, onInstitutionClick, onMessage, savedPreprints, showToast }: { 
   user: User, 
   onBack: () => void, 
   onPreprintClick: (p: Preprint) => void,
   onToggleSave: (p: Preprint) => void,
   onTagClick: (tag: string) => void,
   onInstitutionClick: (id: string) => void,
+  onMessage: (user: User) => void,
   savedPreprints: Preprint[],
   showToast: (msg: string) => void
 }) {
@@ -2721,7 +2764,7 @@ function UserProfileScreen({ user, onBack, onPreprintClick, onToggleSave, onTagC
               {isFollowing ? 'Following' : 'Follow'}
             </button>
             <button 
-              onClick={() => showToast(`Message feature coming soon to ${user.name}'s profile!`)}
+              onClick={() => onMessage(user)}
               className="px-4 border border-slate-200 dark:border-slate-700 py-2.5 rounded-lg font-bold text-sm"
             >
               Message
@@ -3208,13 +3251,21 @@ function NotificationItem({ notification }: { notification: Notification, key?: 
   );
 }
 
-function TrendsScreen({ onTopicClick, showToast }: { onTopicClick: () => void, showToast: (msg: string) => void }) {
+function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionClick, onSearch, showToast }: { 
+  onTopicClick: () => void, 
+  onAuthorClick: (id: string) => void,
+  onTagClick: (tag: string) => void,
+  onInstitutionClick: (id: string) => void,
+  onSearch: (query: string) => void,
+  showToast: (msg: string) => void 
+}) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState<'global' | 'field'>('global');
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      showToast(`Searching trends for: ${searchQuery}`);
+      onTagClick(searchQuery);
     }
   };
 
@@ -3223,18 +3274,18 @@ function TrendsScreen({ onTopicClick, showToast }: { onTopicClick: () => void, s
   );
 
   return (
-    <div className="flex flex-col h-full">
-      <header className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between sticky top-0 bg-white dark:bg-background-dark z-10">
+    <div className="flex flex-col h-full bg-white dark:bg-slate-950">
+      <header className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between sticky top-0 bg-white dark:bg-slate-950 z-20">
         <div className="flex items-center gap-3">
           <div className="bg-primary/10 p-2 rounded-lg">
             <TrendingUp className="size-5 text-primary" />
           </div>
           <h2 className="text-lg font-bold">Research Trends</h2>
         </div>
-        <Bell className="size-5 text-slate-400" />
+        <Bell className="size-5 text-slate-400 cursor-pointer" onClick={() => showToast('Trend alerts enabled')} />
       </header>
 
-      <div className="p-4 space-y-6 overflow-y-auto no-scrollbar">
+      <div className="p-4 space-y-6 overflow-y-auto no-scrollbar pb-24">
         <form onSubmit={handleSearch} className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 size-4" />
           <input 
@@ -3244,23 +3295,20 @@ function TrendsScreen({ onTopicClick, showToast }: { onTopicClick: () => void, s
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-slate-100 dark:bg-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
           />
-          <div className="absolute right-3 top-1/2 -translate-y-1/2 hidden md:flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-white dark:bg-slate-700 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-600">
-            CMD + K
-          </div>
         </form>
 
-        <div className="flex gap-2 overflow-x-auto no-scrollbar">
+        <div className="flex bg-slate-100 dark:bg-slate-900 p-1 rounded-xl">
           <button 
-            onClick={() => showToast('Removed "Quantum Computing" from filters')}
-            className="bg-primary text-white px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 whitespace-nowrap"
+            onClick={() => setActiveTab('global')}
+            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${activeTab === 'global' ? 'bg-white dark:bg-slate-800 shadow-sm text-primary' : 'text-slate-500'}`}
           >
-            Quantum Computing <X className="size-3" />
+            Global Trends
           </button>
           <button 
-            onClick={() => showToast('Added "Neural Networks" to filters')}
-            className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap"
+            onClick={() => setActiveTab('field')}
+            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${activeTab === 'field' ? 'bg-white dark:bg-slate-800 shadow-sm text-primary' : 'text-slate-500'}`}
           >
-            Neural Networks
+            Field Insights
           </button>
         </div>
 
@@ -3269,10 +3317,10 @@ function TrendsScreen({ onTopicClick, showToast }: { onTopicClick: () => void, s
             filteredMetrics.map((metric, i) => (
               <div 
                 key={i} 
-                onClick={onTopicClick}
-                className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm cursor-pointer hover:border-primary/30 transition-all"
+                onClick={() => onTagClick(metric.label.split(' ')[0])}
+                className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm cursor-pointer hover:border-primary/30 transition-all group"
               >
-                <div className="flex items-center gap-2 text-primary mb-2">
+                <div className="flex items-center gap-2 text-primary mb-2 group-hover:scale-105 transition-transform">
                   {metric.icon === 'FileText' ? <Database className="size-4" /> : 
                    metric.icon === 'Quote' ? <Quote className="size-4" /> : <TrendingUp className="size-4" />}
                   <span className="text-[10px] font-bold uppercase tracking-wider">{metric.label}</span>
@@ -3297,12 +3345,11 @@ function TrendsScreen({ onTopicClick, showToast }: { onTopicClick: () => void, s
           <div className="flex justify-between items-center mb-6">
             <div>
               <h3 className="text-lg font-bold">Publication Volume</h3>
-              <p className="text-xs text-slate-500">Global monthly research output (Last 12 months)</p>
+              <p className="text-xs text-slate-500">Global monthly research output</p>
             </div>
             <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
               <button className="px-3 py-1 text-[10px] font-bold bg-white dark:bg-slate-700 rounded shadow-sm">12M</button>
               <button className="px-3 py-1 text-[10px] font-bold text-slate-500">6M</button>
-              <button className="px-3 py-1 text-[10px] font-bold text-slate-500">3M</button>
             </div>
           </div>
           <div className="h-64 w-full">
@@ -3327,24 +3374,24 @@ function TrendsScreen({ onTopicClick, showToast }: { onTopicClick: () => void, s
           </div>
           <div className="flex justify-between text-[10px] font-bold text-slate-400 mt-4 uppercase tracking-wider">
             <span>Oct 2023</span>
-            <span>Jan 2024</span>
-            <span>Apr 2024</span>
-            <span>Jul 2024</span>
             <span>Sep 2024</span>
           </div>
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-          <div className="flex items-center gap-2 mb-6">
-            <Zap className="size-5 text-primary" />
-            <h3 className="text-lg font-bold">Trending Topics</h3>
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-2">
+              <Zap className="size-5 text-primary" />
+              <h3 className="text-lg font-bold">Trending Topics</h3>
+            </div>
+            <button onClick={onTopicClick} className="text-[10px] font-bold text-primary uppercase tracking-wider">Insights</button>
           </div>
           <div className="flex flex-wrap gap-2">
             {['Fault Tolerance', 'Qubit Coherence', 'Shor\'s Algorithm', 'Error Correction', 'Quantum Annealing', 'NISQ Era', 'Supremacy', 'Cryogenics'].map((topic, i) => (
               <button 
-                key={i} 
-                onClick={onTopicClick}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors ${
+                key={topic} 
+                onClick={() => onTagClick(topic)}
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all hover:scale-105 ${
                   topic === 'Shor\'s Algorithm' ? 'bg-primary/10 text-primary border border-primary/20' : 
                   topic === 'Fault Tolerance' ? 'bg-blue-50 text-blue-600 border border-blue-100' :
                   'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-100 dark:border-slate-700'
@@ -3354,13 +3401,37 @@ function TrendsScreen({ onTopicClick, showToast }: { onTopicClick: () => void, s
               </button>
             ))}
           </div>
-          <div className="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800">
-            <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider mb-2">
-              <span className="text-slate-400">Topic Density</span>
-              <span className="text-primary">High</span>
+        </div>
+
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+          <div className="flex justify-between items-center mb-6">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="size-5 text-primary" />
+              <h3 className="text-lg font-bold">Weekly Interest</h3>
             </div>
-            <div className="h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-              <div className="h-full bg-primary w-[70%]"></div>
+          </div>
+          <div className="h-48 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={MOCK_WEEKLY_TRENDS}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700 }} />
+                <YAxis hide />
+                <Tooltip 
+                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '10px' }}
+                />
+                <Bar dataKey="quantum" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={12} />
+                <Bar dataKey="ai" fill="#10b981" radius={[4, 4, 0, 0]} barSize={12} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex justify-center gap-6 mt-4">
+            <div className="flex items-center gap-2">
+              <div className="size-2 rounded-full bg-blue-500"></div>
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Quantum</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="size-2 rounded-full bg-emerald-500"></div>
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">AI</span>
             </div>
           </div>
         </div>
@@ -3371,19 +3442,68 @@ function TrendsScreen({ onTopicClick, showToast }: { onTopicClick: () => void, s
               <Zap className="size-5 text-primary" />
               <h3 className="text-lg font-bold">Rising Stars</h3>
             </div>
-            <button className="text-xs font-bold text-primary">View All</button>
+            <button onClick={() => showToast('Full directory coming soon')} className="text-xs font-bold text-primary">View All</button>
           </div>
           <div className="space-y-6">
             {MOCK_RISING_STARS.map(star => (
-              <div key={star.id} className="flex items-center gap-4">
-                <img src={star.imageUrl} alt="" className="size-12 rounded-full object-cover border-2 border-primary/20" />
+              <div 
+                key={star.id} 
+                className="flex items-center gap-4 cursor-pointer group"
+                onClick={() => onAuthorClick(star.name)}
+              >
+                <img src={star.imageUrl} alt="" className="size-12 rounded-full object-cover border-2 border-primary/20 group-hover:border-primary transition-all" />
                 <div className="flex-1">
-                  <h4 className="text-sm font-bold">{star.name}</h4>
+                  <h4 className="text-sm font-bold group-hover:text-primary transition-colors">{star.name}</h4>
                   <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">{star.affiliation}</p>
                 </div>
-                <span className="text-xs font-bold text-emerald-500">{star.growth}</span>
+                <div className="text-right">
+                  <span className="text-xs font-bold text-emerald-500 block">{star.growth}</span>
+                  <span className="text-[8px] text-slate-400 font-bold uppercase tracking-widest">Growth</span>
+                </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className="bg-slate-50 dark:bg-slate-900/50 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 mb-8">
+          <div className="flex items-center gap-2 mb-4">
+            <Search className="size-5 text-primary" />
+            <h3 className="text-lg font-bold">Find Researchers & Institutions</h3>
+          </div>
+          <p className="text-xs text-slate-500 mb-6">Connect with experts and explore leading research centers globally.</p>
+          
+          <div className="space-y-3">
+            <button 
+              onClick={() => onSearch('')}
+              className="w-full bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-between group hover:border-primary/50 transition-all"
+            >
+              <div className="flex items-center gap-3">
+                <div className="size-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center text-blue-500">
+                  <Users className="size-5" />
+                </div>
+                <div className="text-left">
+                  <p className="text-sm font-bold">Search Researchers</p>
+                  <p className="text-[10px] text-slate-400 font-medium">Find by name, field, or h-index</p>
+                </div>
+              </div>
+              <ChevronRight className="size-5 text-slate-300 group-hover:text-primary transition-colors" />
+            </button>
+
+            <button 
+              onClick={() => onInstitutionClick('uzh')}
+              className="w-full bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-between group hover:border-primary/50 transition-all"
+            >
+              <div className="flex items-center gap-3">
+                <div className="size-10 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center text-emerald-500">
+                  <Globe className="size-5" />
+                </div>
+                <div className="text-left">
+                  <p className="text-sm font-bold">Explore Institutions</p>
+                  <p className="text-[10px] text-slate-400 font-medium">Top universities and labs</p>
+                </div>
+              </div>
+              <ChevronRight className="size-5 text-slate-300 group-hover:text-primary transition-colors" />
+            </button>
           </div>
         </div>
       </div>
@@ -3408,8 +3528,8 @@ function MetricCard({ label, value, change, icon }: { label: string, value: stri
 
 function DailyDigestScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
   return (
-    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-y-auto">
-      <header className="p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+    <div className="flex flex-col h-full bg-white dark:bg-slate-950 overflow-y-auto no-scrollbar">
+      <header className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between sticky top-0 bg-white dark:bg-slate-950 z-20">
         <div className="flex items-center gap-3">
           <ArrowLeft className="cursor-pointer" onClick={onBack} />
           <div className="bg-primary p-2 rounded-lg">
@@ -3423,28 +3543,28 @@ function DailyDigestScreen({ onBack, showToast }: { onBack: () => void, showToas
         <span className="text-xs font-bold text-slate-400">October 24, 2023</span>
       </header>
 
-      <div className="p-6 space-y-8">
+      <div className="p-6 space-y-12 pb-24">
         <div>
-          <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-4">At a Glance</h3>
+          <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-[0.2em] mb-6">At a Glance</h3>
           <div className="grid grid-cols-2 gap-4">
             <div 
-              onClick={() => showToast('Showing new matches for you')}
-              className="bg-blue-50 dark:bg-blue-900/20 p-6 rounded-2xl border border-blue-100 dark:border-blue-900/30 cursor-pointer"
+              onClick={() => showToast('Showing new matches')}
+              className="bg-blue-50/50 dark:bg-blue-900/10 p-6 rounded-2xl border border-blue-100 dark:border-blue-900/30 cursor-pointer hover:bg-blue-50 transition-colors"
             >
               <div className="flex items-center gap-2 text-primary mb-4">
                 <Zap className="size-4" />
-                <span className="text-[10px] font-bold uppercase">New Matches</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider">New Matches</span>
               </div>
               <p className="text-4xl font-bold mb-1">12</p>
               <p className="text-[10px] text-slate-500 leading-tight">Based on your interests</p>
             </div>
             <div 
-              onClick={() => showToast('Showing recent citations')}
-              className="bg-slate-100 dark:bg-slate-800 p-6 rounded-2xl border border-slate-200 dark:border-slate-700 cursor-pointer"
+              onClick={() => showToast('Showing citations found')}
+              className="bg-slate-50 dark:bg-slate-800/30 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 cursor-pointer hover:bg-slate-100 transition-colors"
             >
               <div className="flex items-center gap-2 text-primary mb-4">
                 <Quote className="size-4" />
-                <span className="text-[10px] font-bold uppercase">Citations Found</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider">Citations Found</span>
               </div>
               <p className="text-4xl font-bold mb-1">3</p>
               <p className="text-[10px] text-slate-500 leading-tight">Found in recent publications</p>
@@ -3454,32 +3574,29 @@ function DailyDigestScreen({ onBack, showToast }: { onBack: () => void, showToas
 
         {['Quantum Computing', 'Neural Networks'].map(topic => (
           <div key={topic}>
-            <div className="flex justify-between items-center mb-6">
-              <div className="flex items-center gap-2">
-                {topic === 'Quantum Computing' ? <Zap className="size-5 text-primary" /> : <TrendingUp className="size-5 text-primary" />}
-                <h3 className="text-lg font-bold">{topic}</h3>
+            <div className="flex justify-between items-center mb-8">
+              <div className="flex items-center gap-3">
+                <div className="size-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-primary">
+                  {topic === 'Quantum Computing' ? <Zap className="size-5" /> : <Database className="size-5" />}
+                </div>
+                <h3 className="text-xl font-bold">{topic}</h3>
               </div>
-              <button 
-                onClick={() => showToast(`Showing all ${topic} papers`)}
-                className="text-xs font-bold text-primary"
-              >
-                See all
-              </button>
+              <button className="text-xs font-bold text-primary uppercase tracking-widest">See all</button>
             </div>
-            <div className="space-y-8">
+            <div className="space-y-12">
               {MOCK_DIGEST_PAPERS.filter(p => p.topic === topic).map(paper => (
-                <div key={paper.id} className="space-y-4">
+                <div key={paper.id} className="space-y-6">
                   <div>
-                    <h4 className="text-lg font-bold leading-tight mb-1">{paper.title}</h4>
-                    <p className="text-xs text-slate-500 italic">{paper.authors} • Published in {paper.source}</p>
+                    <h4 className="text-xl font-bold leading-tight mb-2">{paper.title}</h4>
+                    <p className="text-xs text-slate-500 font-medium italic">{paper.authors} • Published in {paper.source}</p>
                   </div>
                   <button 
                     onClick={() => showToast(`Opening abstract for "${paper.title}"`)}
-                    className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-lg shadow-primary/20"
+                    className="bg-primary text-white px-6 py-3 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-primary/20 hover:scale-105 transition-transform"
                   >
-                    View Abstract <ExternalLink className="size-3" />
+                    View Abstract <ExternalLink className="size-4" />
                   </button>
-                  <img src={paper.imageUrl} alt="" className="w-full aspect-video rounded-2xl object-cover shadow-xl" />
+                  <img src={paper.imageUrl} alt="" className="w-full aspect-video rounded-3xl object-cover shadow-2xl" />
                 </div>
               ))}
             </div>
@@ -3487,38 +3604,38 @@ function DailyDigestScreen({ onBack, showToast }: { onBack: () => void, showToas
         ))}
 
         <div>
-          <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-4">Recent Activity</h3>
-          <div className="space-y-3">
+          <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-[0.2em] mb-6">Recent Activity</h3>
+          <div className="space-y-4">
             {MOCK_DIGEST_ACTIVITY.map(activity => (
-              <div key={activity.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 flex items-center gap-4">
-                <div className={`size-10 rounded-full flex items-center justify-center ${activity.type === 'citation' ? 'bg-emerald-50 text-emerald-500' : 'bg-blue-50 text-blue-500'}`}>
-                  {activity.type === 'citation' ? <Quote className="size-5" /> : <UserPlus className="size-5" />}
+              <div key={activity.id} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-center gap-5 shadow-sm">
+                <div className={`size-12 rounded-xl flex items-center justify-center shrink-0 ${activity.type === 'citation' ? 'bg-emerald-50 text-emerald-500' : 'bg-blue-50 text-blue-500'}`}>
+                  {activity.type === 'citation' ? <Quote className="size-6" /> : <UserPlus className="size-6" />}
                 </div>
-                <p className="text-xs font-medium leading-relaxed">
-                  <span className="font-bold">{activity.text.split(' ')[0]} {activity.text.split(' ')[1]}</span> {activity.text.split(' ').slice(2).join(' ')} <span className="text-primary font-bold italic">{activity.highlight}</span>
+                <p className="text-sm font-medium leading-relaxed text-slate-700 dark:text-slate-300">
+                  <span className="font-bold text-slate-900 dark:text-white">{activity.text.split(' ')[0]} {activity.text.split(' ')[1]}</span> {activity.text.split(' ').slice(2).join(' ')} <span className="text-primary font-bold italic underline underline-offset-4">{activity.highlight}</span>
                 </p>
               </div>
             ))}
           </div>
         </div>
 
-        <footer className="pt-8 pb-12 text-center space-y-8">
-          <div className="flex justify-center gap-8 text-slate-400">
+        <footer className="pt-12 pb-8 text-center space-y-10 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex justify-center gap-10 text-slate-400">
             <Settings className="size-6 cursor-pointer hover:text-primary transition-colors" />
             <Bell className="size-6 cursor-pointer hover:text-primary transition-colors" />
             <HelpCircle className="size-6 cursor-pointer hover:text-primary transition-colors" />
           </div>
-          <div className="space-y-2">
-            <p className="text-[10px] text-slate-400 leading-relaxed max-w-[240px] mx-auto">
+          <div className="space-y-4">
+            <p className="text-[10px] text-slate-400 leading-relaxed max-w-[280px] mx-auto font-medium">
               Sent to you because you're following these research areas.
             </p>
-            <div className="flex justify-center gap-4 text-[10px] font-bold uppercase tracking-widest">
-              <button className="text-primary">Manage Digest Frequency</button>
-              <span className="text-slate-300">•</span>
-              <button className="text-slate-400">Unsubscribe</button>
+            <div className="flex justify-center gap-6 text-[10px] font-bold uppercase tracking-widest">
+              <button className="text-primary hover:underline">Manage Digest Frequency</button>
+              <span className="text-slate-200">•</span>
+              <button className="text-slate-400 hover:text-slate-600">Unsubscribe</button>
             </div>
           </div>
-          <div className="text-[8px] font-bold text-slate-300 uppercase tracking-[0.2em]">
+          <div className="text-[8px] font-bold text-slate-300 uppercase tracking-[0.3em]">
             © 2023 RESEARCHFLOW INC. • 123 SCIENCE PLAZA, PALO ALTO, CA
           </div>
         </footer>
@@ -3529,8 +3646,8 @@ function DailyDigestScreen({ onBack, showToast }: { onBack: () => void, showToas
 
 function WeeklyDigestScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
   return (
-    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-y-auto">
-      <header className="p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-y-auto no-scrollbar">
+      <header className="p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between sticky top-0 z-20">
         <div className="flex items-center gap-3">
           <ArrowLeft className="cursor-pointer" onClick={onBack} />
           <div className="bg-primary p-2 rounded-lg">
@@ -3544,127 +3661,150 @@ function WeeklyDigestScreen({ onBack, showToast }: { onBack: () => void, showToa
         />
       </header>
 
-      <div className="p-6 space-y-8">
+      <div className="p-6 space-y-10 pb-24">
         <div>
-          <p className="text-[10px] font-bold text-primary uppercase tracking-widest mb-2">Oct 23 - Oct 30, 2023</p>
-          <h1 className="text-3xl font-bold leading-tight mb-4">Your research week in review</h1>
-          <p className="text-sm text-slate-500 leading-relaxed">
+          <p className="text-[10px] font-bold text-primary uppercase tracking-[0.2em] mb-3">Oct 23 - Oct 30, 2023</p>
+          <h1 className="text-4xl font-bold leading-tight mb-4">Your research week in review</h1>
+          <p className="text-sm text-slate-500 leading-relaxed font-medium">
             We've synthesized the latest breakthroughs and your personal engagement metrics for the past 7 days.
           </p>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Total Matches</p>
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Total Matches</p>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold">128</span>
+              <span className="text-4xl font-bold">128</span>
               <span className="text-emerald-500 text-xs font-bold">+12%</span>
             </div>
           </div>
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Citations</p>
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Citations</p>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold">42</span>
+              <span className="text-4xl font-bold">42</span>
               <span className="text-emerald-500 text-xs font-bold">+5%</span>
             </div>
           </div>
-          <div className="col-span-2 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">New Papers</p>
+          <div className="col-span-2 bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">New Papers</p>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold">15</span>
+              <span className="text-4xl font-bold">15</span>
               <span className="text-emerald-500 text-xs font-bold">+8%</span>
             </div>
           </div>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+        <div className="bg-white dark:bg-slate-900 p-8 rounded-[40px] border border-slate-200 dark:border-slate-800 shadow-sm">
           <div className="flex justify-between items-center mb-8">
             <h3 className="text-xl font-bold">Analytics Spotlight</h3>
             <button className="text-xs font-bold text-primary">View full report</button>
           </div>
-          <p className="text-xs text-slate-500 mb-8">Interest trends in your core research areas</p>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={MOCK_WEEKLY_TRENDS}>
-                <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                <YAxis hide />
-                <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ borderRadius: '12px', border: 'none' }} />
-                <Bar dataKey="ai" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={24} />
-                <Bar dataKey="quantum" fill="#3b82f6" opacity={0.2} radius={[4, 4, 0, 0]} barSize={24} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="flex justify-center gap-6 mt-8">
-            <div className="flex items-center gap-2">
-              <div className="size-3 rounded-full bg-primary"></div>
-              <span className="text-[10px] font-bold text-slate-500">Quantum Computing</span>
+          
+          <div className="mb-8">
+            <p className="text-sm text-slate-500 mb-6 font-medium">Interest trends in your core research areas</p>
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={MOCK_WEEKLY_TRENDS}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} />
+                  <YAxis hide />
+                  <Tooltip 
+                    cursor={{ fill: 'transparent' }}
+                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                  />
+                  <Bar dataKey="quantum" fill="#3b82f6" radius={[6, 6, 0, 0]} barSize={24} />
+                  <Bar dataKey="ai" fill="#3b82f6" opacity={0.2} radius={[6, 6, 0, 0]} barSize={24} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="size-3 rounded-full bg-primary/20"></div>
-              <span className="text-[10px] font-bold text-slate-500">Artificial Intelligence</span>
+            <div className="flex justify-center gap-6 mt-6">
+              <div className="flex items-center gap-2">
+                <div className="size-3 rounded-full bg-blue-500"></div>
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Quantum Computing</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="size-3 rounded-full bg-blue-200"></div>
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Artificial Intelligence</span>
+              </div>
             </div>
           </div>
         </div>
 
         <div>
-          <h3 className="text-xl font-bold mb-6">Top Papers of the Week</h3>
+          <h3 className="text-2xl font-bold mb-8">Top Papers of the Week</h3>
           <div className="space-y-4">
-            {[
-              { title: 'Scalable Transformer Architectures for Large Language Models', authors: 'J. Doe, A. Smith • Stanford University', badge: 'Most Saved', count: '1.2k', icon: <Bookmark className="size-4" /> },
-              { title: 'Quantum Error Correction: A New Paradigm for Fault Tolerance', authors: 'R. Feynman, et al. • MIT Press', badge: 'High Engagement', count: '842', icon: <MessageSquare className="size-4" /> }
-            ].map((paper, i) => (
-              <div key={i} className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-start gap-4">
-                <div className="flex-1">
-                  <span className={`text-[8px] font-bold uppercase px-2 py-1 rounded mb-2 inline-block ${i === 0 ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-600'}`}>
-                    {paper.badge}
-                  </span>
-                  <h4 className="text-base font-bold leading-tight mb-1">{paper.title}</h4>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{paper.authors}</p>
-                </div>
-                <div className="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl flex flex-col items-center gap-1 min-w-[60px]">
-                  {paper.icon}
-                  <span className="text-xs font-bold">{paper.count}</span>
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
+              <div className="absolute top-0 left-0 w-1 h-full bg-amber-400"></div>
+              <div className="flex justify-between items-start mb-4">
+                <span className="bg-amber-50 text-amber-600 text-[8px] font-bold px-2 py-1 rounded uppercase tracking-widest">Most Saved</span>
+                <div className="flex flex-col items-center">
+                  <Bookmark className="size-5 text-primary fill-primary" />
+                  <span className="text-[10px] font-bold mt-1">1.2k</span>
                 </div>
               </div>
-            ))}
+              <h4 className="text-lg font-bold leading-tight mb-2 group-hover:text-primary transition-colors">Scalable Transformer Architectures for Large Language Models</h4>
+              <p className="text-xs text-slate-500 font-medium">J. Doe, A. Smith • Stanford University</p>
+            </div>
+
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
+              <div className="absolute top-0 left-0 w-1 h-full bg-blue-400"></div>
+              <div className="flex justify-between items-start mb-4">
+                <span className="bg-blue-50 text-blue-600 text-[8px] font-bold px-2 py-1 rounded uppercase tracking-widest">High Engagement</span>
+                <div className="flex flex-col items-center">
+                  <MessageSquare className="size-5 text-primary fill-primary" />
+                  <span className="text-[10px] font-bold mt-1">842</span>
+                </div>
+              </div>
+              <h4 className="text-lg font-bold leading-tight mb-2 group-hover:text-primary transition-colors">Quantum Error Correction: A New Paradigm for Fault Tolerance</h4>
+              <p className="text-xs text-slate-500 font-medium">R. Feynman, et al. • MIT Press</p>
+            </div>
           </div>
         </div>
 
-        <div className="bg-primary rounded-3xl p-8 text-white shadow-xl shadow-primary/30">
-          <div className="flex items-center gap-3 mb-6">
+        <div className="bg-primary p-8 rounded-[40px] text-white space-y-6 shadow-2xl shadow-primary/30">
+          <div className="flex items-center gap-3">
             <TrendingUp className="size-6" />
             <h3 className="text-xl font-bold">Citation Growth</h3>
           </div>
-          <p className="text-primary-100 text-sm mb-8 leading-relaxed">
+          <p className="text-sm leading-relaxed opacity-90 font-medium">
             Your research papers saw a 24% increase in discoverability this week compared to last month.
           </p>
-          <div className="flex items-end gap-4 mb-8">
-            <div>
-              <p className="text-[10px] font-bold text-primary-200 uppercase tracking-widest mb-1">Weekly Citations</p>
-              <p className="text-4xl font-bold">1,482</p>
-            </div>
-            <span className="bg-white/20 px-3 py-1 rounded-lg text-xs font-bold mb-1">+24.5%</span>
+          <div className="flex items-baseline gap-3">
+            <span className="text-5xl font-bold">1,482</span>
+            <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold">+24.5%</span>
           </div>
-          <button className="w-full bg-white text-primary font-bold py-4 rounded-xl shadow-lg">
+          <button className="w-full bg-white text-primary py-4 rounded-2xl font-bold shadow-xl hover:scale-[1.02] transition-transform">
             Explore Your Network
           </button>
         </div>
 
-        <footer className="pt-8 pb-12 text-center space-y-8">
-          <div className="flex justify-around px-8">
-            <NavItem icon={<Rss />} label="Feed" active={false} onClick={() => {}} />
-            <NavItem icon={<LibraryIcon />} label="Library" active={false} onClick={() => {}} />
-            <NavItem icon={<TrendingUp />} label="Analytics" active={true} onClick={() => {}} />
-            <NavItem icon={<UserCircle />} label="Profile" active={false} onClick={() => {}} />
+        <footer className="pt-12 pb-8 text-center space-y-10 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex justify-around text-slate-400">
+            <div className="flex flex-col items-center gap-1">
+              <Rss className="size-6" />
+              <span className="text-[8px] font-bold uppercase tracking-widest">Feed</span>
+            </div>
+            <div className="flex flex-col items-center gap-1">
+              <BookMarked className="size-6" />
+              <span className="text-[8px] font-bold uppercase tracking-widest">Library</span>
+            </div>
+            <div className="flex flex-col items-center gap-1 text-primary">
+              <BarChart3 className="size-6" />
+              <span className="text-[8px] font-bold uppercase tracking-widest">Analytics</span>
+            </div>
+            <div className="flex flex-col items-center gap-1">
+              <UserIcon className="size-6" />
+              <span className="text-[8px] font-bold uppercase tracking-widest">Profile</span>
+            </div>
           </div>
-          <div className="space-y-2">
-            <p className="text-[10px] text-slate-400 leading-relaxed max-w-[280px] mx-auto">
+          <div className="space-y-4">
+            <p className="text-[10px] text-slate-400 leading-relaxed max-w-[280px] mx-auto font-medium">
               You're receiving this because you're subscribed to Weekly Digest.
             </p>
-            <div className="flex justify-center gap-4 text-[10px] font-bold uppercase tracking-widest">
-              <button className="text-primary">Manage Preferences</button>
-              <span className="text-slate-300">•</span>
-              <button className="text-slate-400">Unsubscribe</button>
+            <div className="flex justify-center gap-6 text-[10px] font-bold uppercase tracking-widest">
+              <button className="text-slate-500 hover:underline">Manage Preferences</button>
+              <span className="text-slate-200">•</span>
+              <button className="text-slate-500 hover:text-slate-600">Unsubscribe</button>
             </div>
           </div>
         </footer>
@@ -4000,6 +4140,15 @@ function SettingsScreen({ onBack, onNavigate, onLegal, showToast, onSignOut }: {
                   active={settings.dailyDigest}
                   onToggle={() => toggleSetting('dailyDigest')}
                 />
+                <div className="px-4 py-3 bg-slate-50 dark:bg-slate-800/50 flex justify-between items-center">
+                  <span className="text-xs font-bold text-slate-500">Preview Daily Digest</span>
+                  <button 
+                    onClick={() => onNavigate('daily-digest')}
+                    className="text-[10px] font-bold text-primary uppercase tracking-widest bg-white dark:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 shadow-sm"
+                  >
+                    View Now
+                  </button>
+                </div>
                 <SettingItem 
                   title="Weekly Digest"
                   description="The most important research insights from the past week"
@@ -4007,6 +4156,15 @@ function SettingsScreen({ onBack, onNavigate, onLegal, showToast, onSignOut }: {
                   onToggle={() => toggleSetting('weeklyDigest')}
                   showDivider={false}
                 />
+                <div className="px-4 py-3 bg-slate-50 dark:bg-slate-800/50 flex justify-between items-center">
+                  <span className="text-xs font-bold text-slate-500">Preview Weekly Digest</span>
+                  <button 
+                    onClick={() => onNavigate('weekly-digest')}
+                    className="text-[10px] font-bold text-primary uppercase tracking-widest bg-white dark:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 shadow-sm"
+                  >
+                    View Now
+                  </button>
+                </div>
                 {settings.weeklyDigest && (
                   <div className="px-4 pb-4">
                     <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4 flex items-center justify-between">
@@ -4743,14 +4901,17 @@ function Sidebar({ onClose, onNavigate, onLegal }: {
       className="absolute inset-y-0 left-0 w-80 bg-white dark:bg-slate-900 z-[150] shadow-2xl flex flex-col"
     >
       <div className="p-6 border-b border-slate-100 dark:border-slate-800">
-        <div className="flex items-center gap-4 mb-6">
+        <div 
+          className="flex items-center gap-4 mb-6 cursor-pointer group"
+          onClick={() => { onClose(); onNavigate('profile'); }}
+        >
           <img 
             src="https://picsum.photos/seed/profile/200/200" 
             alt="Profile" 
-            className="size-16 rounded-full border-2 border-primary/10 object-cover"
+            className="size-16 rounded-full border-2 border-primary/10 object-cover group-hover:border-primary transition-all"
           />
           <div>
-            <h3 className="text-lg font-bold">Dr. Aris Thorne</h3>
+            <h3 className="text-lg font-bold group-hover:text-primary transition-colors">Dr. Aris Thorne</h3>
             <p className="text-xs text-slate-500">aris.thorne@uzh.ch</p>
           </div>
         </div>
@@ -4767,17 +4928,18 @@ function Sidebar({ onClose, onNavigate, onLegal }: {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-2 no-scrollbar">
-        <SidebarItem icon={<Bell />} label="Alerts" onClick={() => onNavigate('notifications')} />
-        <SidebarItem icon={<TrendingUp />} label="Trends" onClick={() => onNavigate('trends')} />
-        <SidebarItem icon={<LibraryIcon />} label="Library" onClick={() => onNavigate('library')} />
-        <SidebarItem icon={<Settings />} label="Profile Settings" onClick={() => onNavigate('notification-settings')} />
+        <SidebarItem icon={<Bell className="size-5" />} label="Alerts" onClick={() => onNavigate('notifications')} />
+        <SidebarItem icon={<TrendingUp className="size-5" />} label="Trends" onClick={() => onNavigate('trends')} />
+        <SidebarItem icon={<LibraryIcon className="size-5" />} label="Library" onClick={() => onNavigate('library')} />
+        <SidebarItem icon={<MessageSquare className="size-5" />} label="Messages" onClick={() => onNavigate('chat')} />
+        <SidebarItem icon={<Settings className="size-5" />} label="Profile Settings" onClick={() => onNavigate('notification-settings')} />
         
         <div className="h-px bg-slate-100 dark:bg-slate-800 my-4"></div>
         
-        <SidebarItem icon={<FileText />} label="Terms of Service" onClick={() => onLegal('tos')} />
-        <SidebarItem icon={<Shield />} label="Privacy Policy" onClick={() => onLegal('privacy')} />
-        <SidebarItem icon={<HelpCircle />} label="Help" onClick={() => onNavigate('help')} />
-        <SidebarItem icon={<MessageSquare />} label="App Contact" onClick={() => onNavigate('contact')} />
+        <SidebarItem icon={<FileText className="size-5" />} label="Terms of Service" onClick={() => onLegal('tos')} />
+        <SidebarItem icon={<Shield className="size-5" />} label="Privacy Policy" onClick={() => onLegal('privacy')} />
+        <SidebarItem icon={<HelpCircle className="size-5" />} label="Help" onClick={() => onNavigate('help')} />
+        <SidebarItem icon={<MessageSquare className="size-5" />} label="App Contact" onClick={() => onNavigate('contact')} />
       </div>
 
       <div className="p-6 border-t border-slate-100 dark:border-slate-800">
@@ -4809,6 +4971,147 @@ function SidebarItem({ icon, label, onClick }: { icon: React.ReactNode, label: s
       <div className="text-primary">{icon}</div>
       <span className="text-sm font-bold">{label}</span>
     </button>
+  );
+}
+
+function ChatScreen({ onChatClick, onBack }: { onChatClick: (chat: Chat) => void, onBack: () => void }) {
+  return (
+    <div className="flex flex-col h-full bg-white dark:bg-slate-950">
+      <header className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between sticky top-0 bg-white dark:bg-slate-950 z-20">
+        <h2 className="text-xl font-bold">Messages</h2>
+        <div className="flex items-center gap-3">
+          <div className="size-10 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500">
+            <Search className="size-5" />
+          </div>
+          <div className="size-10 rounded-full bg-primary text-white flex items-center justify-center shadow-lg shadow-primary/20">
+            <Plus className="size-5" />
+          </div>
+        </div>
+      </header>
+
+      <div className="flex-1 overflow-y-auto no-scrollbar">
+        {MOCK_CHATS.map(chat => {
+          const otherUserId = chat.participants.find(p => p !== 'aris_thorne');
+          const otherUser = MOCK_USERS.find(u => u.id === otherUserId);
+          
+          return (
+            <div 
+              key={chat.id} 
+              onClick={() => onChatClick(chat)}
+              className="p-4 flex items-center gap-4 border-b border-slate-50 dark:border-slate-900 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors"
+            >
+              <div className="relative">
+                <img 
+                  src={otherUser?.imageUrl || `https://i.pravatar.cc/150?u=${otherUserId}`} 
+                  alt="" 
+                  className="size-14 rounded-full object-cover border border-slate-100 dark:border-slate-800"
+                />
+                {chat.unreadCount > 0 && (
+                  <div className="absolute -top-1 -right-1 size-5 bg-primary text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white dark:border-slate-950">
+                    {chat.unreadCount}
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex justify-between items-center mb-1">
+                  <h4 className="text-sm font-bold truncate">{otherUser?.name || otherUserId}</h4>
+                  <span className="text-[10px] text-slate-400 font-medium">{chat.lastMessageTime}</span>
+                </div>
+                <p className={`text-xs truncate ${chat.unreadCount > 0 ? 'text-slate-900 dark:text-slate-100 font-bold' : 'text-slate-500'}`}>
+                  {chat.lastMessage}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ChatDetailScreen({ chat, onBack, showToast }: { chat: Chat, onBack: () => void, showToast: (msg: string) => void }) {
+  const [message, setMessage] = useState('');
+  const otherUserId = chat.participants.find(p => p !== 'aris_thorne');
+  const otherUser = MOCK_USERS.find(u => u.id === otherUserId);
+
+  const handleSend = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (message.trim()) {
+      showToast('Message sent!');
+      setMessage('');
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950">
+      <header className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between sticky top-0 z-20">
+        <div className="flex items-center gap-3">
+          <ArrowLeft className="cursor-pointer" onClick={onBack} />
+          <img 
+            src={otherUser?.imageUrl || `https://i.pravatar.cc/150?u=${otherUserId}`} 
+            alt="" 
+            className="size-10 rounded-full object-cover"
+          />
+          <div>
+            <h2 className="text-sm font-bold">{otherUser?.name || otherUserId}</h2>
+            <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-widest">Online</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 text-slate-400">
+          <Phone className="size-5" />
+          <Video className="size-5" />
+          <Info className="size-5" />
+        </div>
+      </header>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar">
+        <div className="text-center py-4">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-full">
+            Today
+          </span>
+        </div>
+
+        {chat.messages.map(msg => (
+          <div 
+            key={msg.id} 
+            className={`flex ${msg.senderId === 'aris_thorne' ? 'justify-end' : 'justify-start'}`}
+          >
+            <div className={`max-w-[80%] p-4 rounded-2xl text-sm shadow-sm ${
+              msg.senderId === 'aris_thorne' 
+                ? 'bg-primary text-white rounded-tr-none' 
+                : 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 rounded-tl-none border border-slate-100 dark:border-slate-800'
+            }`}>
+              {msg.text}
+              <p className={`text-[8px] mt-1 text-right ${msg.senderId === 'aris_thorne' ? 'text-white/70' : 'text-slate-400'}`}>
+                {msg.timestamp}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="p-4 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800">
+        <form onSubmit={handleSend} className="flex items-center gap-2">
+          <button type="button" className="p-2 text-slate-400">
+            <Paperclip className="size-5" />
+          </button>
+          <input 
+            type="text" 
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder="Type a message..."
+            className="flex-1 bg-slate-100 dark:bg-slate-800 border-none rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
+          />
+          <button 
+            type="submit"
+            disabled={!message.trim()}
+            className={`p-3 rounded-xl transition-all ${message.trim() ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}
+          >
+            <Send className="size-5" />
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }
 

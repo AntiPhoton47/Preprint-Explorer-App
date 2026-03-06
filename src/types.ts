@@ -126,3 +126,19 @@ export interface DigestActivity {
   text: string;
   highlight?: string;
 }
+
+export interface Message {
+  id: string;
+  senderId: string;
+  text: string;
+  timestamp: string;
+}
+
+export interface Chat {
+  id: string;
+  participants: string[]; // User IDs
+  lastMessage?: string;
+  lastMessageTime?: string;
+  unreadCount: number;
+  messages: Message[];
+}
