@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useDeferredValue, useState, useEffect, useRef } from 'react';
 import { 
   Search, 
   Menu, 
@@ -86,45 +86,158 @@ import {
   Cell
 } from 'recharts';
 import { 
-  MOCK_PREPRINTS, 
-  MOCK_COLLECTIONS, 
-  MOCK_NOTIFICATIONS, 
-  MOCK_CUSTOM_FEEDS,
-  MOCK_TREND_METRICS,
-  MOCK_RISING_STARS,
-  MOCK_DIGEST_PAPERS,
-  MOCK_DIGEST_ACTIVITY,
-  MOCK_PUBLICATION_VOLUME,
-  MOCK_WEEKLY_TRENDS,
-  MOCK_USERS,
-  MOCK_INSTITUTIONS,
-  MOCK_CHATS
-} from './mockData';
-import { 
   Preprint, 
   PaperComment,
   User,
   Institution,
   Collection, 
+  ContentSource,
+  ContentSyncDefinition,
   Notification, 
+  ModerationAction,
+  ModerationReport,
   CustomFeed, 
+  PasskeyCredential,
+  SecurityEvent,
+  SecuritySummary,
   TrendMetric, 
   RisingStar, 
+  PopularSearch,
+  SavedSearch,
+  SearchSuggestion,
+  TrustedDevice,
+  EncryptionKeyRecord,
   DigestPaper, 
   DigestActivity,
   Chat,
-  Message
+  Message,
+  SupportTicket
 } from './types';
 
+import { AppDataProvider, useAppData } from './context/appDataContext';
+import {
+  bulkModerationAction,
+  blockUser,
+  changePassword,
+  clearCsrfToken,
+  completeTwoFactorLogin,
+  createChat,
+  disableTwoFactor,
+  deleteContentSyncDefinition,
+  deletePasskey,
+  enableTwoFactor,
+  fetchBackendPreprints,
+  searchBackendPreprints,
+  fetchBlockedUsers,
+  fetchContentSources,
+  fetchContentSyncDefinitions,
+  fetchNotifications,
+  fetchSearchAnalytics,
+  fetchSavedSearches,
+  fetchSearchSuggestions,
+  fetchModerationReport,
+  fetchModerationReports,
+  fetchPasskeys,
+  fetchSecurityEvents,
+  fetchSecuritySummary,
+  fetchSocialBootstrap,
+  fetchTrustedDevices,
+  followUser,
+  getCurrentSession,
+  ingestContentSource,
+  login,
+  markChatRead,
+  markNotificationRead,
+  markNotificationsRead,
+  logout,
+  logoutOtherSessions,
+  revokeTrustedDevice,
+  regenerateBackupCodes,
+  reauthenticate,
+  reauthenticateWithPasskey,
+  escalateModerationReport,
+  reportContent,
+  saveSearch,
+  register,
+  requestEmailVerification,
+  requestPasswordReset,
+  registerPasskey,
+  reviewModerationReport,
+  assignModerationReport,
+  saveContentSyncDefinition,
+  resetPassword,
+  rotateSession,
+  sendMessage,
+  sharePreprint,
+  signInWithPasskey,
+  startTwoFactorSetup,
+  type AuthPayload,
+  type Settings as UserSettings,
+  type TwoFactorLoginPayload,
+  unfollowUser,
+  unblockUser,
+  updateProfile,
+  updateSettings,
+  verifyEmail,
+  deleteSavedSearch,
+} from './services/api';
 import { storageService } from './services/storageService';
 
-type Screen = 'login' | 'register' | 'home' | 'library' | 'collections' | 'collection-detail' | 'reader' | 'profile' | 'notifications' | 'trends' | 'edit-profile' | 'share' | 'feeds' | 'notification-settings' | 'daily-digest' | 'weekly-digest' | 'topic-insight' | 'security-settings' | 'change-password' | '2fa-setup' | '2fa-backup' | 'security-log' | 'user-profile' | 'tag-results' | 'institution-detail' | 'legal' | 'encryption-keys' | 'trusted-devices' | 'help' | 'contact' | 'chat' | 'chat-detail';
+type RecentAuthPayload =
+  | { method: 'password'; currentPassword: string }
+  | { method: '2fa'; twoFactorCode: string }
+  | { method: 'passkey' };
+
+type Screen = 'login' | 'register' | 'home' | 'library' | 'collections' | 'collection-detail' | 'reader' | 'profile' | 'notifications' | 'trends' | 'edit-profile' | 'share' | 'feeds' | 'notification-settings' | 'daily-digest' | 'weekly-digest' | 'topic-insight' | 'security-settings' | 'change-password' | '2fa-setup' | '2fa-backup' | 'security-log' | 'passkeys' | 'user-profile' | 'tag-results' | 'institution-detail' | 'legal' | 'encryption-keys' | 'trusted-devices' | 'help' | 'contact' | 'chat' | 'chat-detail' | 'moderation-center';
+
+const DEFAULT_USER_SETTINGS: UserSettings = {
+  pushEnabled: true,
+  emailEnabled: true,
+  dailyDigest: true,
+  weeklyDigest: true,
+  newPublications: true,
+  citationAlerts: true,
+  productUpdates: false,
+  deliveryDay: 'Friday',
+  profileVisibility: 'public',
+  messagePrivacy: 'everyone',
+  sharePrivacy: 'everyone',
+};
 
 export default function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  return (
+    <AppDataProvider>
+      <AppShell />
+    </AppDataProvider>
+  );
+}
+
+function AppShell() {
+  const { dataset, setDataset } = useAppData();
+  const reauthResolverRef = useRef<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+  } | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [userSettings, setUserSettings] = useState<UserSettings>(DEFAULT_USER_SETTINGS);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [latestBackupCodes, setLatestBackupCodes] = useState<string[]>([]);
+  const [passkeys, setPasskeys] = useState<PasskeyCredential[]>([]);
+  const [securitySummary, setSecuritySummary] = useState<SecuritySummary | null>(null);
+  const [trustedDevices, setTrustedDevices] = useState<TrustedDevice[]>([]);
+  const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([]);
+  const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
+  const [moderationReports, setModerationReports] = useState<ModerationReport[]>([]);
+  const [moderators, setModerators] = useState<Array<Pick<User, 'id' | 'name'>>>([]);
+  const [moderationActions, setModerationActions] = useState<Record<string, ModerationAction[]>>({});
   const [currentScreen, setCurrentScreen] = useState<Screen>('login');
   const [navigationHistory, setNavigationHistory] = useState<Screen[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeHomeFeedId, setActiveHomeFeedId] = useState<string | null>(() => storageService.getActiveFeedId());
+  const [searchSuggestions, setSearchSuggestions] = useState<SearchSuggestion[]>([]);
+  const [popularSearches, setPopularSearches] = useState<PopularSearch[]>([]);
+  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
+  const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
   const [selectedPreprint, setSelectedPreprint] = useState<Preprint | null>(null);
   const [selectedCollection, setSelectedCollection] = useState<Collection | null>(null);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -134,18 +247,129 @@ export default function App() {
   const [legalType, setLegalType] = useState<'tos' | 'privacy'>('tos');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [savedPreprints, setSavedPreprints] = useState<Preprint[]>([]);
-  const [allPreprints, setAllPreprints] = useState<Preprint[]>(MOCK_PREPRINTS);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [pushNotification, setPushNotification] = useState<{ title: string, body: string } | null>(null);
+  const [pushNotification, setPushNotification] = useState<Notification | null>(null);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'info' } | null>(null);
   const [isCitationModalOpen, setIsCitationModalOpen] = useState(false);
   const [showOutline, setShowOutline] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [reportPrompt, setReportPrompt] = useState<{ targetType: 'user' | 'preprint' | 'chat' | 'message' | 'comment'; targetId: string; targetLabel: string } | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [reauthPrompt, setReauthPrompt] = useState<{ title: string; description: string } | null>(null);
+  const isLoggedIn = currentUser !== null;
+  const unreadNotificationsCount = dataset.notifications.filter((notification) => notification.isNew && isNotificationVisible(notification, userSettings)).length;
+  const unreadMessagesCount = dataset.chats.reduce((total, chat) => total + (chat.unreadCount ?? 0), 0);
+  const openModerationCount = moderationReports.filter((report) => report.status === 'open' || report.status === 'reviewing').length;
+
+  const applyAuthSession = (session: AuthPayload) => {
+    setCurrentUser(session.user);
+    setUserSettings(session.settings);
+    setDataset(prev => ({
+      ...prev,
+      users: session.social.users,
+      chats: session.social.chats,
+    }));
+    if (!session.user.isAdmin) {
+      setModerationReports([]);
+      setModerators([]);
+      setModerationActions({});
+    }
+  };
+
+  const refreshSession = async () => {
+    const session = await getCurrentSession();
+    applyAuthSession(session);
+    return session;
+  };
+
+  const refreshSecurityState = async () => {
+    const [devicesResponse, eventsResponse, passkeysResponse, summaryResponse] = await Promise.all([
+      fetchTrustedDevices(),
+      fetchSecurityEvents(),
+      fetchPasskeys(),
+      fetchSecuritySummary(),
+    ]);
+    setTrustedDevices(devicesResponse.devices);
+    setSecurityEvents(eventsResponse.events);
+    setPasskeys(passkeysResponse.passkeys);
+    setSecuritySummary(summaryResponse);
+  };
+
+  const refreshNotificationsState = async (userId?: string) => {
+    if (!currentUser && !userId) {
+      return;
+    }
+    const response = await fetchNotifications();
+    setDataset(prev => ({
+      ...prev,
+      notifications: response.notifications,
+    }));
+  };
+
+  const refreshModerationState = async (userId?: string) => {
+    if (!currentUser && !userId) {
+      return;
+    }
+    const response = await fetchBlockedUsers();
+    setBlockedUserIds(response.blockedUserIds);
+  };
+
+  const refreshSavedSearchesState = async (userId?: string) => {
+    if (!currentUser && !userId) {
+      return;
+    }
+    const response = await fetchSavedSearches();
+    setSavedSearches(response.searches);
+  };
+
+  const refreshSearchAnalyticsState = async (userId?: string) => {
+    if (!currentUser && !userId) {
+      return;
+    }
+    const response = await fetchSearchAnalytics();
+    setPopularSearches(response.popularSearches);
+  };
+
+  const refreshModerationReportsState = async (adminUser?: User | null) => {
+    const actor = adminUser ?? currentUser;
+    if (!actor?.isAdmin) {
+      setModerationReports([]);
+      setModerators([]);
+      setModerationActions({});
+      return;
+    }
+    const response = await fetchModerationReports('all');
+    setModerationReports(response.reports);
+    setModerators(response.moderators);
+  };
 
   const showToast = (message: string, type: 'success' | 'info' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const requestRecentAuth = (title: string, description: string) => new Promise<void>((resolve, reject) => {
+    reauthResolverRef.current = { resolve, reject };
+    setReauthPrompt({ title, description });
+  });
+
+  const handleReauthSubmit = async (payload: RecentAuthPayload) => {
+    if (payload.method === 'passkey') {
+      await reauthenticateWithPasskey();
+    } else if (payload.method === '2fa') {
+      await reauthenticate({ twoFactorCode: payload.twoFactorCode });
+    } else if (payload.method === 'password') {
+      await reauthenticate({ currentPassword: payload.currentPassword });
+    }
+    reauthResolverRef.current?.resolve();
+    reauthResolverRef.current = null;
+    setReauthPrompt(null);
+  };
+
+  const handleReauthCancel = () => {
+    reauthResolverRef.current?.reject(new Error('Re-authentication canceled'));
+    reauthResolverRef.current = null;
+    setReauthPrompt(null);
   };
 
   const navigateTo = (screen: Screen) => {
@@ -164,23 +388,243 @@ export default function App() {
     }
   };
 
+  const openNotificationDestination = async (notification: Notification) => {
+    if (notification.isNew) {
+      await markNotificationRead(notification.id);
+      await refreshNotificationsState();
+    }
+
+    const actionUrl = notification.actionUrl?.trim();
+    if (actionUrl) {
+      if (actionUrl.startsWith('/chat/')) {
+        const chatId = actionUrl.replace('/chat/', '');
+        const chat = dataset.chats.find((item) => item.id === chatId);
+        if (chat) {
+          setSelectedChat(chat);
+          navigateTo('chat-detail');
+          return;
+        }
+      }
+
+      if (actionUrl.startsWith('/share/')) {
+        const preprintId = actionUrl.replace('/share/', '');
+        const preprint = dataset.preprints.find((item) => item.id === preprintId);
+        if (preprint) {
+          setSelectedPreprint(preprint);
+          navigateTo('reader');
+          return;
+        }
+      }
+
+      if (actionUrl.startsWith('/profile/')) {
+        const userId = actionUrl.replace('/profile/', '');
+        if (currentUser?.id === userId) {
+          navigateTo('profile');
+          return;
+        }
+        const user = dataset.users.find((item) => item.id === userId);
+        if (user) {
+          setSelectedUser(user);
+          navigateTo('user-profile');
+          return;
+        }
+      }
+
+      if (actionUrl.startsWith('/moderation/')) {
+        navigateTo('moderation-center');
+        return;
+      }
+
+      if (actionUrl === '/notifications') {
+        navigateTo('notifications');
+        return;
+      }
+    }
+
+    if (notification.type === 'feed') {
+      navigateTo('home');
+      return;
+    }
+    if (notification.type === 'collab' || notification.type === 'share') {
+      navigateTo('library');
+      return;
+    }
+    if (notification.type === 'comment') {
+      navigateTo('daily-digest');
+      return;
+    }
+    if (notification.type === 'citation') {
+      navigateTo('weekly-digest');
+      return;
+    }
+    navigateTo('notifications');
+  };
+
   useEffect(() => {
-    // Simulate a push notification after 5 seconds
-    const timer = setTimeout(() => {
-      setPushNotification({
-        title: 'New Research Found',
-        body: '5 new papers match your "Neural Networks" feed criteria. Tap to view.'
-      });
-    }, 5000);
+    const bootstrap = async () => {
+      try {
+        const session = await refreshSession();
+        await refreshSecurityState();
+        await refreshNotificationsState('bootstrap');
+        await refreshModerationState('bootstrap');
+        await refreshSavedSearchesState('bootstrap');
+        await refreshSearchAnalyticsState('bootstrap');
+        await refreshModerationReportsState(session.user);
+        setCurrentScreen('home');
+      } catch {
+        // No active session.
+        clearCsrfToken();
+        setPasskeys([]);
+        setSecuritySummary(null);
+        setTrustedDevices([]);
+        setSecurityEvents([]);
+        setBlockedUserIds([]);
+        setSavedSearches([]);
+        setPopularSearches([]);
+        setSearchSuggestions([]);
+        setModerationReports([]);
+      } finally {
+        setIsAuthLoading(false);
+      }
+    };
+
+    bootstrap();
+  }, [setDataset]);
+
+  useEffect(() => {
+    if (!currentUser || !userSettings.pushEnabled || currentScreen === 'notifications') {
+      setPushNotification(null);
+      return;
+    }
+    const unreadNotification = dataset.notifications.find((notification) => notification.isNew && isNotificationVisible(notification, userSettings));
+    if (!unreadNotification) {
+      setPushNotification(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setPushNotification(unreadNotification);
+    }, 2500);
 
     return () => clearTimeout(timer);
-  }, []);
+  }, [currentUser, currentScreen, dataset.notifications, userSettings.pushEnabled]);
 
   useEffect(() => {
-    // Load saved preprints from storage
-    setSavedPreprints(storageService.getSavedPreprints());
+    const savedIds = new Set(storageService.getSavedPreprints().map(preprint => preprint.id));
+    setSavedPreprints(dataset.preprints.filter(preprint => savedIds.has(preprint.id)));
+  }, [dataset.preprints]);
 
-    // Online/Offline listeners
+  useEffect(() => {
+    if (activeHomeFeedId && !dataset.customFeeds.some((feed) => feed.id === activeHomeFeedId && feed.isActive)) {
+      setActiveHomeFeedId(null);
+      storageService.setActiveFeedId(null);
+      return;
+    }
+    storageService.setActiveFeedId(activeHomeFeedId);
+  }, [activeHomeFeedId, dataset.customFeeds]);
+
+  useEffect(() => {
+    if (!isSidebarOpen) {
+      document.body.style.overflow = '';
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsSidebarOpen(false);
+      }
+    };
+
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = '';
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isSidebarOpen]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      return;
+    }
+
+    const stream = new EventSource('/api/events', { withCredentials: true });
+    stream.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { type?: string };
+        if (payload.type === 'social-updated' || payload.type === 'chat-updated') {
+          fetchSocialBootstrap().then(applySocialBootstrap).catch(() => {});
+        }
+        if (payload.type === 'security-updated') {
+          refreshSecurityState().catch(() => {});
+        }
+        if (payload.type === 'notifications-updated') {
+          refreshNotificationsState().catch(() => {});
+        }
+      } catch {
+        // Ignore malformed SSE payloads.
+      }
+    };
+
+    return () => {
+      stream.close();
+    };
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (currentScreen === 'moderation-center' && currentUser?.isAdmin) {
+      refreshModerationReportsState(currentUser).catch(() => {});
+    }
+  }, [currentScreen, currentUser]);
+
+  useEffect(() => {
+    if (!currentUser || currentScreen !== 'home') {
+      return;
+    }
+    refreshSearchAnalyticsState(currentUser.id).catch(() => {});
+  }, [currentUser, currentScreen]);
+
+  useEffect(() => {
+    if (!currentUser || currentScreen !== 'home' || searchQuery.trim().length < 2) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      refreshSearchAnalyticsState(currentUser.id).catch(() => {});
+    }, 700);
+    return () => window.clearTimeout(timeoutId);
+  }, [currentUser, currentScreen, searchQuery]);
+
+  useEffect(() => {
+    if (!currentUser || currentScreen !== 'home') {
+      setSearchSuggestions([]);
+      return;
+    }
+    const query = searchQuery.trim();
+    if (query.length < 2) {
+      setSearchSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      fetchSearchSuggestions(query)
+        .then((response) => {
+          if (!cancelled) {
+            setSearchSuggestions(response.suggestions);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setSearchSuggestions([]);
+          }
+        });
+    }, 180);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [currentUser, currentScreen, searchQuery]);
+
+  useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
 
@@ -216,7 +660,7 @@ export default function App() {
   };
 
   const handleUserClick = (userId: string) => {
-    const user = MOCK_USERS.find(u => u.id === userId || u.name === userId);
+    const user = dataset.users.find(u => u.id === userId || u.name === userId);
     if (user) {
       setSelectedUser(user);
       navigateTo('user-profile');
@@ -225,6 +669,7 @@ export default function App() {
       const fallbackUser: User = {
         id: userId,
         name: userId,
+        title: 'Independent Researcher',
         affiliation: 'Independent Researcher',
         imageUrl: `https://i.pravatar.cc/150?u=${userId}`,
         bio: 'Academic researcher contributing to the global scientific community.',
@@ -246,7 +691,7 @@ export default function App() {
   };
 
   const handleInstitutionClick = (institutionId: string) => {
-    const inst = MOCK_INSTITUTIONS.find(i => i.id === institutionId || i.name === institutionId);
+    const inst = dataset.institutions.find(i => i.id === institutionId || i.name === institutionId);
     if (inst) {
       setSelectedInstitution(inst);
       navigateTo('institution-detail');
@@ -254,40 +699,351 @@ export default function App() {
   };
 
   const handleMessageClick = (user: User) => {
-    // Find existing chat or create a new one
-    const existingChat = MOCK_CHATS.find(c => c.participants.includes(user.id));
+    const existingChat = dataset.chats.find(c => c.participants.includes(user.id));
     if (existingChat) {
       setSelectedChat(existingChat);
       navigateTo('chat-detail');
     } else {
-      const newChat: Chat = {
-        id: `chat-${Date.now()}`,
-        participants: ['aris_thorne', user.id],
-        unreadCount: 0,
-        messages: []
-      };
-      // In a real app we'd add it to state, here we just select it
-      setSelectedChat(newChat);
-      navigateTo('chat-detail');
+      createChat(user.id)
+        .then(({ chat }) => {
+          setDataset(prev => ({
+            ...prev,
+            chats: [chat, ...prev.chats.filter(existing => existing.id !== chat.id)],
+          }));
+          setSelectedChat(chat);
+          navigateTo('chat-detail');
+        })
+        .catch(error => showToast(error instanceof Error ? error.message : 'Unable to create chat', 'info'));
     }
+  };
+
+  const upsertChatAtTop = (chat: Chat) => {
+    setDataset(prev => ({
+      ...prev,
+      chats: [chat, ...prev.chats.filter((item) => item.id !== chat.id)],
+    }));
+  };
+
+  const applySocialBootstrap = (social: { users: User[]; chats: Chat[] }) => {
+    setDataset(prev => ({
+      ...prev,
+      users: social.users,
+      chats: social.chats,
+    }));
+  };
+
+  const handleLogin = async (email: string, password: string) => {
+    const session = await login(email, password);
+    if ('requiresTwoFactor' in session) {
+      return session;
+    }
+    applyAuthSession(session);
+    await refreshSecurityState();
+    await refreshNotificationsState(session.user.id);
+    await refreshModerationState(session.user.id);
+    await refreshSavedSearchesState(session.user.id);
+    await refreshModerationReportsState(session.user);
+    setCurrentScreen('home');
+    return null;
+  };
+
+  const handleRegister = async (name: string, email: string, affiliation: string, password: string) => {
+    const session = await register(name, email, affiliation, password);
+    applyAuthSession(session);
+    await refreshSecurityState();
+    await refreshNotificationsState(session.user.id);
+    await refreshModerationState(session.user.id);
+    await refreshSavedSearchesState(session.user.id);
+    await refreshModerationReportsState(session.user);
+    setCurrentScreen('home');
+  };
+
+  const handleCompleteTwoFactorLogin = async (challengeToken: string, code: string, rememberDevice: boolean) => {
+    const session = await completeTwoFactorLogin(challengeToken, code, rememberDevice);
+    applyAuthSession(session);
+    await refreshSecurityState();
+    await refreshNotificationsState(session.user.id);
+    await refreshModerationState(session.user.id);
+    await refreshSavedSearchesState(session.user.id);
+    await refreshModerationReportsState(session.user);
+    setCurrentScreen('home');
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await logout();
+    } catch {
+      // Continue clearing local UI state even if the server session is already gone.
+    }
+    clearCsrfToken();
+    setCurrentUser(null);
+    setPasskeys([]);
+    setSecuritySummary(null);
+    setTrustedDevices([]);
+    setSecurityEvents([]);
+    setBlockedUserIds([]);
+    setSavedSearches([]);
+    setSearchSuggestions([]);
+    setModerationReports([]);
+    setDataset(prev => ({ ...prev, notifications: [] }));
+    setCurrentScreen('login');
+    setNavigationHistory([]);
+  };
+
+  const handleRotateSession = async () => {
+    const session = await rotateSession();
+    setCurrentUser(session.user);
+    setUserSettings(session.settings);
+    applySocialBootstrap(session.social);
+    await refreshSecurityState();
+    await refreshNotificationsState(session.user.id);
+    await refreshModerationState(session.user.id);
+    await refreshSavedSearchesState(session.user.id);
+    await refreshModerationReportsState(session.user);
+  };
+
+  const handleEnableTwoFactor = async (code: string) => {
+    const response = await enableTwoFactor(code);
+    setLatestBackupCodes(response.backupCodes);
+    await refreshSession();
+    await refreshSecurityState();
+    return response.backupCodes;
+  };
+
+  const handleDisableTwoFactor = async (code: string) => {
+    try {
+      await disableTwoFactor(code);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Recent authentication required') {
+        await requestRecentAuth(
+          'Confirm Two-Factor Disable',
+          'Re-authenticate to disable two-factor authentication on this account.',
+        );
+        await disableTwoFactor(code);
+      } else {
+        throw error;
+      }
+    }
+    setLatestBackupCodes([]);
+    await refreshSession();
+    await refreshSecurityState();
+  };
+
+  const handleRegenerateBackupCodes = async (code: string) => {
+    const response = await regenerateBackupCodes(code);
+    setLatestBackupCodes(response.backupCodes);
+    await refreshSecurityState();
+    return response.backupCodes;
+  };
+
+  const handleLogoutOtherSessions = async () => {
+    await logoutOtherSessions();
+    await refreshSecurityState();
+  };
+
+  const handleRevokeTrustedDevice = async (deviceId: string) => {
+    await revokeTrustedDevice(deviceId);
+    await refreshSecurityState();
+  };
+
+  const handleRegisterPasskey = async (label?: string) => {
+    const response = await registerPasskey(label);
+    setPasskeys(response.passkeys);
+    await refreshSecurityState();
+    return response.passkeys;
+  };
+
+  const handleDeletePasskey = async (passkeyId: string) => {
+    try {
+      await deletePasskey(passkeyId);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Recent authentication required') {
+        await requestRecentAuth(
+          'Confirm Passkey Removal',
+          'Re-authenticate to remove this passkey from your account.',
+        );
+        await deletePasskey(passkeyId);
+      } else {
+        throw error;
+      }
+    }
+    await refreshSecurityState();
+  };
+
+  const handlePasskeyLogin = async (email: string) => {
+    const session = await signInWithPasskey(email);
+    applyAuthSession(session);
+    await refreshSecurityState();
+    await refreshNotificationsState(session.user.id);
+    await refreshModerationState(session.user.id);
+    await refreshSavedSearchesState(session.user.id);
+    await refreshModerationReportsState(session.user);
+    setCurrentScreen('home');
+  };
+
+  const handleBlockUser = async (userId: string) => {
+    const response = await blockUser(userId);
+    setBlockedUserIds(response.blockedUserIds);
+    await refreshNotificationsState(currentUser?.id);
+    await refreshSession().catch(() => {});
+  };
+
+  const handleUnblockUser = async (userId: string) => {
+    await unblockUser(userId);
+    await refreshModerationState(currentUser?.id);
+  };
+
+  const handleSubmitReport = async (reason: 'spam' | 'harassment' | 'misinformation' | 'copyright' | 'other', details: string) => {
+    if (!reportPrompt) {
+      return;
+    }
+    await reportContent({
+      targetType: reportPrompt.targetType,
+      targetId: reportPrompt.targetId,
+      reason,
+      details,
+    });
+    await refreshNotificationsState(currentUser?.id);
+    await refreshModerationReportsState();
+    setReportPrompt(null);
+  };
+
+  const handleReviewModerationReport = async (reportId: string, payload: { status: 'reviewing' | 'resolved' | 'dismissed'; resolutionNote?: string }) => {
+    const response = await reviewModerationReport(reportId, payload);
+    setModerationReports(prev => prev.map(report => report.id === reportId ? response.report : report));
+    const detail = await fetchModerationReport(reportId);
+    setModerationActions(prev => ({ ...prev, [reportId]: detail.actions }));
+    await refreshNotificationsState(currentUser?.id);
+  };
+
+  const handleAssignModerationReport = async (reportId: string, assignedToUserId: string | null) => {
+    const response = await assignModerationReport(reportId, assignedToUserId);
+    setModerationReports(prev => prev.map(report => report.id === reportId ? response.report : report));
+    const detail = await fetchModerationReport(reportId);
+    setModerationActions(prev => ({ ...prev, [reportId]: detail.actions }));
+  };
+
+  const handleEscalateModerationReport = async (reportId: string, escalationReason: string) => {
+    const response = await escalateModerationReport(reportId, escalationReason);
+    setModerationReports(prev => prev.map(report => report.id === reportId ? response.report : report));
+    const detail = await fetchModerationReport(reportId);
+    setModerationActions(prev => ({ ...prev, [reportId]: detail.actions }));
+  };
+
+  const handleBulkModerationAction = async (payload: {
+    reportIds: string[];
+    action: 'assign' | 'review' | 'escalate';
+    assignedToUserId?: string | null;
+    status?: 'reviewing' | 'resolved' | 'dismissed';
+    resolutionNote?: string;
+    escalationReason?: string;
+  }) => {
+    const response = await bulkModerationAction(payload);
+    setModerationReports(prev => {
+      const mapped = new Map(prev.map(report => [report.id, report]));
+      response.reports.forEach((report) => mapped.set(report.id, report));
+      return Array.from(mapped.values());
+    });
+    await refreshModerationReportsState();
+  };
+
+  const handleOpenModerationReport = async (reportId: string) => {
+    const detail = await fetchModerationReport(reportId);
+    setModerationActions(prev => ({ ...prev, [reportId]: detail.actions }));
+    return detail;
+  };
+
+  const handleSaveCurrentSearch = async (label: string, filters: SavedSearch['filters']) => {
+    const response = await saveSearch({
+      label,
+      queryText: searchQuery.trim(),
+      filters,
+    });
+    setSavedSearches((prev) => [response.search, ...prev.filter((item) => item.id !== response.search.id)]);
+  };
+
+  const handleDeleteSavedSearch = async (searchId: string) => {
+    await deleteSavedSearch(searchId);
+    setSavedSearches((prev) => prev.filter((item) => item.id !== searchId));
+  };
+
+  const handleApplySavedSearch = (savedSearch: SavedSearch) => {
+    setSearchQuery(savedSearch.queryText);
+    setCurrentScreen('home');
+  };
+
+  const handleApplyPopularSearch = (query: string) => {
+    setSearchQuery(query);
+    setCurrentScreen('home');
+    setShowSearchSuggestions(false);
+  };
+
+  const handleToggleFollow = async (user: User) => {
+    if (!currentUser) {
+      return;
+    }
+    const social = user.isFollowing ? await unfollowUser(user.id) : await followUser(user.id);
+    applySocialBootstrap(social);
+    setSelectedUser(prev => (prev && prev.id === user.id ? social.users.find(item => item.id === user.id) ?? prev : prev));
+  };
+
+  const handleUpdateSetting = async (key: keyof UserSettings, value: boolean | string) => {
+    const updated = await updateSettings({ [key]: value } as Partial<UserSettings>);
+    setUserSettings(updated);
+    return updated;
+  };
+
+  const handleProfileSave = async (payload: {
+    name: string;
+    email: string;
+    affiliation: string;
+    bio: string;
+    title: string;
+    imageUrl: string;
+    isAffiliationVerified?: boolean;
+    currentPassword?: string;
+  }) => {
+    let response;
+    try {
+      response = await updateProfile(payload);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Recent authentication required') {
+        await requestRecentAuth(
+          'Confirm Email Change',
+          'Re-authenticate to update the email address on this account.',
+        );
+        response = await updateProfile(payload);
+      } else {
+        throw error;
+      }
+    }
+    setCurrentUser(response.user);
+    applySocialBootstrap(response.social);
   };
 
   const handleRate = (preprintId: string, rating: number) => {
-    setAllPreprints(prev => prev.map(p => 
-      p.id === preprintId ? { ...p, userRating: rating } : p
-    ));
+    setDataset(prev => ({
+      ...prev,
+      preprints: prev.preprints.map(p =>
+        p.id === preprintId ? { ...p, userRating: rating, rating } : p
+      ),
+      metadata: {
+        ...prev.metadata,
+        lastUpdated: new Date().toISOString(),
+      },
+    }));
     if (selectedPreprint?.id === preprintId) {
-      setSelectedPreprint(prev => prev ? { ...prev, userRating: rating } : null);
+      setSelectedPreprint(prev => prev ? { ...prev, userRating: rating, rating } : null);
     }
   };
 
-  function LegalScreen({ type, onBack }: { type: 'tos' | 'privacy', onBack: () => void }) {
+  function LegalScreen({ type, onBack, onOpenMenu }: { type: 'tos' | 'privacy', onBack: () => void, onOpenMenu: () => void }) {
     const content = type === 'tos' ? {
       title: 'Terms of Service',
       sections: [
         {
           title: '1. Acceptance of Terms',
-          body: 'By accessing or using ResearchFlow, you agree to be bound by these Terms of Service and all applicable laws and regulations.'
+          body: 'By accessing or using Preprint Explorer, you agree to be bound by these Terms of Service and all applicable laws and regulations.'
         },
         {
           title: '2. User Accounts',
@@ -295,11 +1051,11 @@ export default function App() {
         },
         {
           title: '3. Intellectual Property',
-          body: 'All content on ResearchFlow, including text, graphics, logos, and software, is the property of ResearchFlow or its content suppliers and is protected by international copyright laws.'
+          body: 'All content on Preprint Explorer, including text, graphics, logos, and software, is the property of Preprint Explorer or its content suppliers and is protected by international copyright laws.'
         },
         {
           title: '4. Prohibited Conduct',
-          body: 'You agree not to use ResearchFlow for any unlawful purpose or in any way that could damage, disable, or impair the service.'
+          body: 'You agree not to use Preprint Explorer for any unlawful purpose or in any way that could damage, disable, or impair the service.'
         }
       ]
     } : {
@@ -326,13 +1082,18 @@ export default function App() {
 
     return (
       <div className="flex flex-col h-full bg-white dark:bg-slate-950">
-        <header className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center gap-4 sticky top-0 bg-white dark:bg-slate-950 z-20">
-          <ArrowLeft className="cursor-pointer" onClick={onBack} />
-          <h2 className="text-xl font-bold">{content.title}</h2>
+        <header className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-4 sticky top-0 bg-white dark:bg-slate-950 z-20">
+          <div className="flex items-center gap-4">
+            <ArrowLeft className="cursor-pointer" onClick={onBack} />
+            <h2 className="text-xl font-bold">{content.title}</h2>
+          </div>
+          <button type="button" onClick={onOpenMenu} className="rounded-full p-2 text-primary hover:bg-slate-100 dark:hover:bg-slate-900" aria-label="Open menu">
+            <Menu className="size-5" />
+          </button>
         </header>
         <div className="flex-1 overflow-y-auto p-8 space-y-8 no-scrollbar">
           <div className="prose dark:prose-invert max-w-none">
-            <p className="text-slate-500 mb-8">Last updated: October 24, 2023</p>
+            <p className="text-slate-500 mb-8">Last updated: {formatAbsoluteDate(new Date())}</p>
             {content.sections.map((section, i) => (
               <div key={i} className="mb-8">
                 <h3 className="text-lg font-bold mb-3">{section.title}</h3>
@@ -346,21 +1107,32 @@ export default function App() {
   }
 
   const renderScreen = () => {
+    if (isAuthLoading) {
+      return (
+        <div className="flex h-full items-center justify-center bg-white dark:bg-slate-950">
+          <div className="text-center">
+            <div className="mx-auto mb-4 size-12 animate-pulse rounded-2xl bg-primary/20" />
+            <p className="text-sm font-medium text-slate-500">Loading account…</p>
+          </div>
+        </div>
+      );
+    }
+
     if (!isLoggedIn) {
       if (currentScreen === 'register') {
         return (
           <RegisterScreen 
             onBack={() => setCurrentScreen('login')} 
-            onRegister={() => { setIsLoggedIn(true); setCurrentScreen('home'); }} 
+            onRegister={handleRegister} 
             onLegal={(type) => { setLegalType(type); navigateTo('legal'); }}
             showToast={showToast} 
           />
         );
       }
       if (currentScreen === 'legal') {
-        return <LegalScreen type={legalType} onBack={goBack} />;
+        return <LegalScreen type={legalType} onBack={goBack} onOpenMenu={() => {}} />;
       }
-      return <LoginScreen onLogin={() => { setIsLoggedIn(true); setCurrentScreen('home'); }} onRegister={() => setCurrentScreen('register')} showToast={showToast} />;
+      return <LoginScreen onLogin={handleLogin} onPasskeyLogin={handlePasskeyLogin} onCompleteTwoFactorLogin={handleCompleteTwoFactorLogin} onRegister={() => setCurrentScreen('register')} showToast={showToast} />;
     }
 
     switch (currentScreen) {
@@ -370,8 +1142,17 @@ export default function App() {
           savedPreprints={savedPreprints} 
           onToggleSave={toggleSave}
           searchQuery={searchQuery}
+          activeFeedId={activeHomeFeedId}
           onTagClick={handleTagClick}
-          preprints={allPreprints}
+          preprints={dataset.preprints}
+          customFeeds={dataset.customFeeds}
+          popularSearches={popularSearches}
+          savedSearches={savedSearches}
+          onSelectFeed={(feedId) => setActiveHomeFeedId(feedId)}
+          onApplyPopularSearch={handleApplyPopularSearch}
+          onSaveSearch={handleSaveCurrentSearch}
+          onDeleteSavedSearch={handleDeleteSavedSearch}
+          onApplySavedSearch={handleApplySavedSearch}
           showToast={showToast}
         />
       );
@@ -388,8 +1169,9 @@ export default function App() {
       );
       case 'collection-detail': return (
         <CollectionDetailScreen 
-          collection={selectedCollection || MOCK_COLLECTIONS[0]} 
+          collection={selectedCollection || dataset.collections[0]} 
           onBack={goBack} 
+          onShareCollection={() => navigateTo('share')}
           savedPreprints={savedPreprints} 
           onToggleSave={toggleSave} 
           onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }}
@@ -400,27 +1182,34 @@ export default function App() {
       );
       case 'reader': return (
         <ReaderScreen 
-          preprint={selectedPreprint || allPreprints[0]} 
+          preprint={selectedPreprint || dataset.preprints[0]} 
+          currentUser={currentUser!}
           onBack={goBack}
           onToggleSave={toggleSave} 
-          isSaved={savedPreprints.some(p => p.id === (selectedPreprint?.id || allPreprints[0].id))}
-          onRate={(rating) => handleRate(selectedPreprint?.id || allPreprints[0].id, rating)}
+          isSaved={savedPreprints.some(p => p.id === (selectedPreprint?.id || dataset.preprints[0].id))}
+          onRate={(rating) => handleRate(selectedPreprint?.id || dataset.preprints[0].id, rating)}
           onTagClick={handleTagClick}
           onAuthorClick={handleUserClick}
           showToast={showToast}
           onCite={() => setIsCitationModalOpen(true)}
+          onReport={() => setReportPrompt({
+            targetType: 'preprint',
+            targetId: (selectedPreprint || dataset.preprints[0]).id,
+            targetLabel: (selectedPreprint || dataset.preprints[0]).title,
+          })}
           showOutline={showOutline}
           setShowOutline={setShowOutline}
         />
       );
-      case 'profile': return <ProfileScreen onEdit={() => navigateTo('edit-profile')} onSettings={() => navigateTo('notification-settings')} onSignOut={() => { setIsLoggedIn(false); setCurrentScreen('login'); setNavigationHistory([]); }} onInstitutionClick={handleInstitutionClick} preprints={allPreprints} showToast={showToast} />;
-      case 'edit-profile': return <EditProfileScreen onBack={goBack} showToast={showToast} />;
-      case 'notification-settings': return <SettingsScreen onBack={goBack} onNavigate={(s: Screen) => navigateTo(s)} onLegal={(type) => { setLegalType(type); navigateTo('legal'); }} showToast={showToast} onSignOut={() => { setIsLoggedIn(false); setCurrentScreen('login'); setNavigationHistory([]); }} />;
+      case 'profile': return <ProfileScreen currentUser={currentUser!} onEdit={() => navigateTo('edit-profile')} onSettings={() => navigateTo('notification-settings')} onSignOut={handleSignOut} onInstitutionClick={handleInstitutionClick} onUserClick={handleUserClick} preprints={dataset.preprints} showToast={showToast} />;
+      case 'edit-profile': return <EditProfileScreen currentUser={currentUser!} onBack={goBack} onSaveProfile={handleProfileSave} showToast={showToast} />;
+      case 'notification-settings': return <SettingsScreen settings={userSettings} canModerate={Boolean(currentUser?.isAdmin)} onUpdateSetting={handleUpdateSetting} onBack={goBack} onOpenMenu={() => setIsSidebarOpen(true)} onNavigate={(s: Screen) => navigateTo(s)} onLegal={(type) => { setLegalType(type); navigateTo('legal'); }} showToast={showToast} onSignOut={handleSignOut} />;
       case 'change-password': return <ChangePasswordScreen onBack={goBack} showToast={showToast} />;
-      case '2fa-setup': return <TwoFactorAuthScreen onBack={goBack} onNext={() => navigateTo('2fa-backup')} showToast={showToast} />;
-      case '2fa-backup': return <TwoFactorBackupCodesScreen onBack={goBack} onDone={() => navigateTo('notification-settings')} showToast={showToast} />;
-      case 'security-log': return <SecurityLogScreen onBack={goBack} showToast={showToast} />;
-      case 'notifications': return <NotificationsScreen onDailyDigest={() => navigateTo('daily-digest')} onWeeklyDigest={() => navigateTo('weekly-digest')} onBack={goBack} showToast={showToast} />;
+      case '2fa-setup': return <TwoFactorAuthScreen currentUser={currentUser!} onBack={goBack} onNext={() => navigateTo('2fa-backup')} onEnable={handleEnableTwoFactor} onDisable={handleDisableTwoFactor} showToast={showToast} />;
+      case '2fa-backup': return <TwoFactorBackupCodesScreen backupCodes={latestBackupCodes} onBack={goBack} onRegenerate={handleRegenerateBackupCodes} onDone={() => navigateTo('notification-settings')} showToast={showToast} />;
+      case 'security-log': return <SecurityLogScreen logs={securityEvents} onBack={goBack} onRotateSession={handleRotateSession} onLogoutOthers={handleLogoutOtherSessions} showToast={showToast} />;
+      case 'passkeys': return <PasskeysScreen passkeys={passkeys} securitySummary={securitySummary} onBack={goBack} onRegisterPasskey={handleRegisterPasskey} onDeletePasskey={handleDeletePasskey} showToast={showToast} />;
+      case 'notifications': return <NotificationsScreen settings={userSettings} onOpenNotification={openNotificationDestination} onBack={goBack} showToast={showToast} onRefreshNotifications={refreshNotificationsState} />;
       case 'trends': return (
         <TrendsScreen 
           onTopicClick={() => navigateTo('topic-insight')} 
@@ -431,8 +1220,8 @@ export default function App() {
           showToast={showToast} 
         />
       );
-      case 'daily-digest': return <DailyDigestScreen onBack={goBack} showToast={showToast} />;
-      case 'weekly-digest': return <WeeklyDigestScreen onBack={goBack} showToast={showToast} />;
+      case 'daily-digest': return <DailyDigestScreen onBack={goBack} onOpenSettings={() => navigateTo('notification-settings')} onOpenHelp={() => navigateTo('help')} onOpenNotifications={() => navigateTo('notifications')} onUnsubscribe={async () => { await handleUpdateSetting('dailyDigest', false); }} isSubscribed={userSettings.dailyDigest} showToast={showToast} />;
+      case 'weekly-digest': return <WeeklyDigestScreen onBack={goBack} onOpenLibrary={() => navigateTo('library')} onOpenProfile={() => navigateTo('profile')} onOpenHome={() => navigateTo('home')} onOpenSettings={() => navigateTo('notification-settings')} onUnsubscribe={async () => { await handleUpdateSetting('weeklyDigest', false); }} isSubscribed={userSettings.weeklyDigest} showToast={showToast} />;
       case 'topic-insight': return (
         <TopicInsightScreen 
           onBack={goBack} 
@@ -445,12 +1234,23 @@ export default function App() {
       case 'user-profile': return (
         <UserProfileScreen 
           user={selectedUser!} 
+          currentUserId={currentUser!.id}
           onBack={goBack} 
           onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }} 
           onToggleSave={toggleSave}
+          onToggleFollow={handleToggleFollow}
           onTagClick={handleTagClick}
+          onAuthorClick={handleUserClick}
           onInstitutionClick={handleInstitutionClick}
           onMessage={handleMessageClick}
+          onReport={() => setReportPrompt({
+            targetType: 'user',
+            targetId: selectedUser!.id,
+            targetLabel: selectedUser!.name,
+          })}
+          onBlockUser={handleBlockUser}
+          onUnblockUser={handleUnblockUser}
+          isBlocked={blockedUserIds.includes(selectedUser!.id)}
           savedPreprints={savedPreprints}
           showToast={showToast}
         />
@@ -459,7 +1259,7 @@ export default function App() {
         <TagResultsScreen 
           tag={selectedTag!} 
           onBack={goBack} 
-          preprints={allPreprints} 
+          preprints={dataset.preprints} 
           onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }}
           onToggleSave={toggleSave}
           savedPreprints={savedPreprints}
@@ -476,15 +1276,17 @@ export default function App() {
           showToast={showToast}
         />
       );
-      case 'legal': return <LegalScreen type={legalType} onBack={goBack} />;
-      case 'feeds': return <CustomFeedsScreen onBack={goBack} showToast={showToast} />;
+      case 'share': return <ShareScreen collection={selectedCollection || dataset.collections[0]} currentUser={currentUser!} onBack={goBack} showToast={showToast} />;
+      case 'legal': return <LegalScreen type={legalType} onBack={goBack} onOpenMenu={() => setIsSidebarOpen(true)} />;
+      case 'feeds': return <CustomFeedsScreen onBack={goBack} onOpenFeed={(feedId) => { setActiveHomeFeedId(feedId); navigateTo('home'); }} showToast={showToast} />;
       case 'encryption-keys': return <EncryptionKeysScreen onBack={goBack} showToast={showToast} />;
-      case 'trusted-devices': return <TrustedDevicesScreen onBack={goBack} showToast={showToast} />;
-      case 'help': return <HelpScreen onBack={goBack} />;
-      case 'contact': return <ContactScreen onBack={goBack} showToast={showToast} />;
-      case 'chat': return <ChatScreen onChatClick={(chat) => { setSelectedChat(chat); navigateTo('chat-detail'); }} onBack={goBack} />;
-      case 'chat-detail': return <ChatDetailScreen chat={selectedChat!} onBack={goBack} showToast={showToast} />;
-      default: return <HomeScreen onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }} savedPreprints={savedPreprints} onToggleSave={toggleSave} searchQuery={searchQuery} onTagClick={handleTagClick} preprints={allPreprints} showToast={showToast} />;
+      case 'trusted-devices': return <TrustedDevicesScreen devices={trustedDevices} onBack={goBack} onRemoveDevice={handleRevokeTrustedDevice} showToast={showToast} />;
+      case 'moderation-center': return <ModerationCenterScreen reports={moderationReports} moderators={moderators} reportActions={moderationActions} onBack={goBack} onOpenReport={handleOpenModerationReport} onAssignReport={handleAssignModerationReport} onEscalateReport={handleEscalateModerationReport} onBulkAction={handleBulkModerationAction} onReviewReport={handleReviewModerationReport} showToast={showToast} />;
+      case 'help': return <HelpScreen onBack={goBack} onOpenMenu={() => setIsSidebarOpen(true)} onOpenContact={() => navigateTo('contact')} onOpenMessages={() => navigateTo('chat')} onOpenLibrary={() => navigateTo('library')} onOpenFeeds={() => navigateTo('feeds')} onOpenSettings={() => navigateTo('notification-settings')} onOpenHome={() => navigateTo('home')} />;
+      case 'contact': return <ContactScreen currentUser={currentUser} onBack={goBack} onOpenMenu={() => setIsSidebarOpen(true)} showToast={showToast} />;
+      case 'chat': return <ChatScreen currentUserId={currentUser!.id} onChatClick={(chat) => { setSelectedChat(chat); navigateTo('chat-detail'); }} onStartChat={handleMessageClick} onBack={goBack} showToast={showToast} />;
+      case 'chat-detail': return <ChatDetailScreen currentUserId={currentUser!.id} chat={selectedChat!} onBack={goBack} onOpenUserProfile={handleUserClick} showToast={showToast} onChatUpdated={(chat) => { setSelectedChat(chat); upsertChatAtTop(chat); }} onReport={() => setReportPrompt({ targetType: 'chat', targetId: selectedChat!.id, targetLabel: 'conversation' })} onBlockUser={handleBlockUser} onUnblockUser={handleUnblockUser} isBlocked={selectedChat!.participants.some(participantId => participantId !== currentUser!.id && blockedUserIds.includes(participantId))} />;
+      default: return <HomeScreen onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }} savedPreprints={savedPreprints} onToggleSave={toggleSave} searchQuery={searchQuery} activeFeedId={activeHomeFeedId} onTagClick={handleTagClick} preprints={dataset.preprints} customFeeds={dataset.customFeeds} popularSearches={popularSearches} savedSearches={savedSearches} onSelectFeed={(feedId) => setActiveHomeFeedId(feedId)} onApplyPopularSearch={handleApplyPopularSearch} onSaveSearch={handleSaveCurrentSearch} onDeleteSavedSearch={handleDeleteSavedSearch} onApplySavedSearch={handleApplySavedSearch} showToast={showToast} />;
     }
   };
 
@@ -508,8 +1310,9 @@ export default function App() {
               exit={{ y: -100, opacity: 0 }}
               className="absolute top-4 left-4 right-4 z-[100]"
               onClick={() => {
+                const notification = pushNotification;
                 setPushNotification(null);
-                setCurrentScreen('notifications');
+                void openNotificationDestination(notification);
               }}
             >
               <div className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl p-4 rounded-3xl shadow-2xl border border-white/20 flex items-start gap-3">
@@ -518,11 +1321,11 @@ export default function App() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-center mb-0.5">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Research App</span>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Preprint Explorer</span>
                     <span className="text-[10px] text-slate-400">now</span>
                   </div>
                   <h4 className="text-sm font-bold truncate">{pushNotification.title}</h4>
-                  <p className="text-xs text-slate-500 line-clamp-2">{pushNotification.body}</p>
+                  <p className="text-xs text-slate-500 line-clamp-2">{pushNotification.description}</p>
                 </div>
               </div>
             </motion.div>
@@ -557,12 +1360,39 @@ export default function App() {
           )}
         </AnimatePresence>
 
+        <AnimatePresence>
+          {reportPrompt && (
+            <ReportModal
+              targetLabel={reportPrompt.targetLabel}
+              onCancel={() => setReportPrompt(null)}
+              onSubmit={handleSubmitReport}
+            />
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {reauthPrompt && currentUser && (
+            <RecentAuthModal
+              title={reauthPrompt.title}
+              description={reauthPrompt.description}
+              allowPasskey={passkeys.length > 0}
+              allowTwoFactor={Boolean(currentUser.hasTwoFactorEnabled)}
+              onCancel={handleReauthCancel}
+              onConfirm={handleReauthSubmit}
+              showToast={showToast}
+            />
+          )}
+        </AnimatePresence>
+
         {/* Share Modal */}
         <AnimatePresence>
           {showShareModal && selectedPreprint && (
             <ShareModal 
               preprint={selectedPreprint} 
               onClose={() => setShowShareModal(false)} 
+              onShare={async (preprintId, recipientIds) => {
+                await sharePreprint(preprintId, recipientIds);
+              }}
               showToast={showToast}
             />
           )}
@@ -580,6 +1410,13 @@ export default function App() {
                 className="absolute inset-0 bg-black/40 backdrop-blur-sm z-[140]"
               />
               <Sidebar 
+                currentUser={currentUser!}
+                currentScreen={currentScreen}
+                legalType={legalType}
+                unreadNotificationsCount={unreadNotificationsCount}
+                unreadMessagesCount={unreadMessagesCount}
+                openModerationCount={openModerationCount}
+                onSignOut={handleSignOut}
                 onClose={() => setIsSidebarOpen(false)} 
                 onNavigate={(s) => { setIsSidebarOpen(false); navigateTo(s); }}
                 onLegal={(type) => { setIsSidebarOpen(false); setLegalType(type); navigateTo('legal'); }}
@@ -598,7 +1435,7 @@ export default function App() {
                 <UserCircle className="cursor-pointer" onClick={() => setCurrentScreen('profile')} />
               </div>
             </div>
-            {['home', 'feeds'].includes(currentScreen) && (
+            {currentScreen === 'home' && (
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 size-5" />
                 <input 
@@ -606,20 +1443,55 @@ export default function App() {
                   placeholder="Search titles, authors, or DOIs"
                   className="w-full bg-slate-100 dark:bg-slate-800 rounded-xl py-3 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
                   value={searchQuery}
+                  onFocus={() => setShowSearchSuggestions(true)}
+                  onBlur={() => window.setTimeout(() => setShowSearchSuggestions(false), 120)}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
+                {showSearchSuggestions && (searchSuggestions.length > 0 || popularSearches.length > 0) && (
+                  <div className="absolute left-0 right-0 top-full z-30 mt-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+                    {(searchQuery.trim().length >= 2
+                      ? searchSuggestions
+                      : popularSearches.map((item) => ({ label: item.query, type: 'query' as const }))
+                    ).map((suggestion) => (
+                      <button
+                        key={`${suggestion.type}:${suggestion.label}`}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          handleApplyPopularSearch(suggestion.label);
+                          setShowSearchSuggestions(false);
+                        }}
+                        className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800"
+                      >
+                        <span className="text-sm text-slate-700 dark:text-slate-200">{suggestion.label}</span>
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{suggestion.type}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </header>
         ) : currentScreen === 'reader' && selectedPreprint ? (
           <header className="shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-background-dark/80 backdrop-blur-md p-4 flex items-center justify-between">
             <div className="flex items-center gap-3 truncate">
-              <ArrowLeft className="cursor-pointer" onClick={() => setCurrentScreen('home')} />
+              <ArrowLeft className="cursor-pointer" onClick={goBack} />
               <h1 className="text-sm font-semibold truncate">{selectedPreprint.title}</h1>
             </div>
             <div className="flex items-center gap-3">
-              <Search className="size-5 text-slate-500" />
-              <Bookmark className="size-5 text-slate-500" />
+              <button type="button" onClick={() => setShowOutline(true)} className="text-slate-500 transition-colors hover:text-primary" aria-label="Open outline">
+                <Search className="size-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  toggleSave(selectedPreprint);
+                  showToast(savedPreprints.some((paper) => paper.id === selectedPreprint.id) ? 'Removed from library' : 'Saved to library for offline reading');
+                }}
+                className="text-slate-500 transition-colors hover:text-primary"
+                aria-label="Toggle save"
+              >
+                <Bookmark className={`size-5 ${savedPreprints.some((paper) => paper.id === selectedPreprint.id) ? 'fill-current text-primary' : ''}`} />
+              </button>
             </div>
           </header>
         ) : null}
@@ -652,15 +1524,10 @@ export default function App() {
           </nav>
         ) : currentScreen === 'reader' ? (
           <nav className="shrink-0 bg-white dark:bg-background-dark border-t border-slate-200 dark:border-slate-800 flex justify-around p-3 pb-6">
-            <NavItem icon={<BookOpen />} label="Read" active={true} onClick={() => {}} />
+            <NavItem icon={<BookOpen />} label="Read" active={true} onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} />
             <NavItem icon={<Menu />} label="Outline" active={false} onClick={() => setShowOutline(true)} />
             <NavItem icon={<Share2 />} label="Share" active={false} onClick={() => setShowShareModal(true)} />
-            <NavItem icon={<Download />} label="PDF" active={false} onClick={() => {
-              showToast('Preparing PDF for download...');
-              setTimeout(() => {
-                showToast('Download started: ' + (selectedPreprint?.title.substring(0, 20) || 'paper') + '.pdf');
-              }, 1500);
-            }} />
+            <NavItem icon={<Download />} label="PDF" active={false} onClick={() => selectedPreprint && openPreprintAsset(selectedPreprint, showToast)} />
           </nav>
         ) : null}
       </div>
@@ -850,15 +1717,239 @@ const SOURCE_CATEGORIES: Record<string, string[]> = {
   ]
 };
 
-function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery, onTagClick, preprints, showToast }: { 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function renderHighlightedText(text: string, query: string) {
+  const tokens = Array.from(new Set(query.trim().toLowerCase().split(/\s+/).filter(Boolean))).sort((left, right) => right.length - left.length);
+  if (!text || tokens.length === 0) {
+    return text;
+  }
+  const matcher = new RegExp(`(${tokens.map((token) => escapeRegExp(token)).join('|')})`, 'ig');
+  return text.split(matcher).map((segment, index) => (
+    tokens.includes(segment.toLowerCase())
+      ? <mark key={`${segment}-${index}`} className="rounded bg-amber-200/80 px-0.5 text-slate-900 dark:bg-amber-400/70">{segment}</mark>
+      : <React.Fragment key={`${segment}-${index}`}>{segment}</React.Fragment>
+  ));
+}
+
+function renderChatMessageContent(text: string) {
+  const parts = text.split(/(https?:\/\/[^\s]+)/g).filter(Boolean);
+  return parts.map((part, index) => {
+    if (/^https?:\/\//i.test(part)) {
+      return (
+        <a
+          key={`${part}-${index}`}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="break-all underline underline-offset-2"
+        >
+          {part}
+        </a>
+      );
+    }
+    return <React.Fragment key={`${part}-${index}`}>{part}</React.Fragment>;
+  });
+}
+
+function matchesPreprintSearchQuery(preprint: Preprint, query: string) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  return (
+    preprint.title.toLowerCase().includes(normalized)
+    || preprint.authors.some((author) => author.toLowerCase().includes(normalized))
+    || preprint.tags.some((tag) => tag.toLowerCase().includes(normalized))
+    || (preprint.abstract ?? '').toLowerCase().includes(normalized)
+    || (preprint.doi ?? '').toLowerCase().includes(normalized)
+  );
+}
+
+function matchesPreprintKeywords(preprint: Preprint, keywords: string[]) {
+  if (keywords.length === 0) {
+    return true;
+  }
+  return keywords.some((keyword) => matchesPreprintSearchQuery(preprint, keyword));
+}
+
+function getFeedFrequencyWindowDays(frequency: CustomFeed['frequency']) {
+  if (frequency === 'Real-time') {
+    return 1;
+  }
+  if (frequency === 'Daily') {
+    return 7;
+  }
+  return 30;
+}
+
+function getFeedFrequencyWindowLabel(frequency: CustomFeed['frequency']) {
+  if (frequency === 'Real-time') {
+    return 'Last 24 hours';
+  }
+  if (frequency === 'Daily') {
+    return 'Last 7 days';
+  }
+  return 'Last 30 days';
+}
+
+function isNotificationVisible(notification: Notification, settings: UserSettings) {
+  if (notification.type === 'feed') {
+    return settings.newPublications;
+  }
+  if (notification.type === 'citation') {
+    return settings.citationAlerts;
+  }
+  return true;
+}
+
+function sortPreprintsByRecent(preprints: Preprint[]) {
+  return [...preprints].sort((left, right) => {
+    const leftTime = new Date(left.publishedAt ?? left.date).getTime();
+    const rightTime = new Date(right.publishedAt ?? right.date).getTime();
+    return rightTime - leftTime;
+  });
+}
+
+async function copyText(value: string) {
+  await navigator.clipboard.writeText(value);
+}
+
+function downloadTextFile(filename: string, contents: string) {
+  const blob = new Blob([contents], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function formatAbsoluteDate(value: Date | string, options?: Intl.DateTimeFormatOptions) {
+  const date = typeof value === 'string' ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) {
+    return typeof value === 'string' ? value : '';
+  }
+  return date.toLocaleDateString([], options ?? { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+function formatChatListTime(value?: string, fallback?: string) {
+  if (!value) {
+    return fallback ?? '';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return fallback ?? '';
+  }
+  const now = new Date();
+  const isSameDay = date.toDateString() === now.toDateString();
+  if (isSameDay) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) {
+    return 'Yesterday';
+  }
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function formatChatDayLabel(value?: string) {
+  if (!value) {
+    return 'Today';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'Today';
+  }
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) {
+    return 'Today';
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) {
+    return 'Yesterday';
+  }
+  return formatAbsoluteDate(date, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function slugifyLabel(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function getNetworkIcon(label: string) {
+  const normalized = label.toLowerCase();
+  if (normalized === 'orcid') {
+    return <Quote />;
+  }
+  if (normalized === 'linkedin') {
+    return <UserPlus />;
+  }
+  if (normalized === 'twitter') {
+    return <Share2 />;
+  }
+  return <Compass />;
+}
+
+function buildPreprintExport(preprint: Preprint) {
+  return [
+    preprint.title,
+    '',
+    `Authors: ${preprint.authors.join(', ')}`,
+    `Source: ${preprint.source}`,
+    `Published: ${preprint.publishedAt ?? preprint.date}`,
+    preprint.doi ? `DOI: ${preprint.doi}` : null,
+    preprint.url ? `Source URL: ${preprint.url}` : null,
+    '',
+    'Abstract',
+    preprint.abstract,
+  ].filter(Boolean).join('\n');
+}
+
+function openPreprintAsset(preprint: Preprint, showToast: (message: string, type?: 'success' | 'info') => void) {
+  const targetUrl = preprint.pdfUrl ?? preprint.url;
+  if (targetUrl) {
+    window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    showToast(preprint.pdfUrl ? 'Opening PDF in a new tab...' : 'Opening source record in a new tab...');
+    return;
+  }
+
+  const fileBase = preprint.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'preprint';
+  downloadTextFile(`${fileBase}.txt`, buildPreprintExport(preprint));
+  showToast('Downloaded offline text export for this paper.');
+}
+
+function findPreprintForDigestPaper(preprints: Preprint[], paper: DigestPaper) {
+  return preprints.find((preprint) => preprint.title.toLowerCase() === paper.title.toLowerCase())
+    ?? preprints.find((preprint) => preprint.title.toLowerCase().includes(paper.title.toLowerCase()) || paper.title.toLowerCase().includes(preprint.title.toLowerCase()));
+}
+
+function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery, activeFeedId, onTagClick, preprints, customFeeds, popularSearches, savedSearches, onSelectFeed, onApplyPopularSearch, onSaveSearch, onDeleteSavedSearch, onApplySavedSearch, showToast }: { 
   onPreprintClick: (p: Preprint) => void, 
   savedPreprints: Preprint[], 
   onToggleSave: (p: Preprint) => void,
   searchQuery?: string,
+  activeFeedId: string | null,
   onTagClick?: (tag: string) => void,
   preprints: Preprint[],
-  showToast: (msg: string) => void
+  customFeeds: CustomFeed[],
+  popularSearches: PopularSearch[],
+  savedSearches: SavedSearch[],
+  onSelectFeed: (feedId: string | null) => void,
+  onApplyPopularSearch: (query: string) => void,
+  onSaveSearch: (label: string, filters: SavedSearch['filters']) => Promise<void>,
+  onDeleteSavedSearch: (searchId: string) => Promise<void>,
+  onApplySavedSearch: (savedSearch: SavedSearch) => void,
+  showToast: (message: string, type?: 'success' | 'info') => void
 }) {
+  const deferredSearchQuery = useDeferredValue(searchQuery ?? '');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [sources, setSources] = useState(['arXiv', 'bioRxiv', 'medRxiv', 'ChemRxiv', 'SSRN', 'Research Square', 'PhilPapers', 'OA Journals', 'OA Articles']);
   const [activeSources, setActiveSources] = useState<string[]>([]);
@@ -871,6 +1962,47 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
   const [isAddingSource, setIsAddingSource] = useState(false);
   const [newSource, setNewSource] = useState('');
   const [showCategoryMenu, setShowCategoryMenu] = useState<string | null>(null);
+  const [remotePreprints, setRemotePreprints] = useState<Preprint[] | null>(null);
+  const [remoteTotal, setRemoteTotal] = useState<number | null>(null);
+  const [isSearchLoading, setIsSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [newSavedSearchLabel, setNewSavedSearchLabel] = useState('');
+  const selectedCategories: string[] = Object.values(activeCategories).flatMap((categories) => categories as string[]);
+  const activeFeed = customFeeds.find((feed) => feed.id === activeFeedId && feed.isActive) ?? null;
+  const activeFeedKeywords = activeFeed?.keywords ?? [];
+  const feedWindowDays = activeFeed ? getFeedFrequencyWindowDays(activeFeed.frequency) : null;
+  const feedWindowLabel = activeFeed ? getFeedFrequencyWindowLabel(activeFeed.frequency) : null;
+
+  const searchStartDate = (() => {
+    const now = new Date();
+    if (dateRange === 'Last 24 hours') {
+      return new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    }
+    if (dateRange === 'Last 7 days') {
+      return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    }
+    if (dateRange === 'Last 30 days') {
+      return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    }
+    if (dateRange === 'Custom Range' && customStartDate) {
+      return new Date(customStartDate).toISOString();
+    }
+    return undefined;
+  })();
+
+  const searchEndDate = (() => {
+    if (dateRange === 'Custom Range' && customEndDate) {
+      return new Date(customEndDate).toISOString();
+    }
+    return undefined;
+  })();
+
+  const effectiveSearchStartDate = searchStartDate ?? (
+    activeFeed && dateRange === 'All Time' && feedWindowDays !== null
+      ? new Date(Date.now() - feedWindowDays * 24 * 60 * 60 * 1000).toISOString()
+      : undefined
+  );
+  const effectiveSearchEndDate = searchEndDate;
 
   const handleToggleSource = (source: string) => {
     if (!activeSources.includes(source)) {
@@ -913,7 +2045,7 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
     }
   };
 
-  const filteredPreprints = preprints
+  const localFilteredPreprints = preprints
     .filter(p => {
       // Source & Category Filter
       const matchesSource = activeSources.length === 0 || activeSources.includes(p.source);
@@ -921,10 +2053,8 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
       const matchesCategory = sourceCats.length === 0 || p.tags.some(t => sourceCats.includes(t));
       
       // Search Filter
-      const matchesSearch = !searchQuery || 
-        p.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        p.authors.some(a => a.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        p.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
+      const matchesSearch = matchesPreprintSearchQuery(p, deferredSearchQuery);
+      const matchesFeedKeywords = matchesPreprintKeywords(p, activeFeedKeywords);
       
       // Publication Type Filter
       const matchesPubType = pubType === 'All Types' || p.type === pubType;
@@ -934,7 +2064,9 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
       const paperDate = new Date(p.date);
       const now = new Date();
       
-      if (dateRange === 'Last 24 hours') {
+      if (!searchStartDate && activeFeed && dateRange === 'All Time' && feedWindowDays !== null) {
+        matchesDate = (now.getTime() - paperDate.getTime()) <= feedWindowDays * 24 * 60 * 60 * 1000;
+      } else if (dateRange === 'Last 24 hours') {
         matchesDate = (now.getTime() - paperDate.getTime()) <= 24 * 60 * 60 * 1000;
       } else if (dateRange === 'Last 7 days') {
         matchesDate = (now.getTime() - paperDate.getTime()) <= 7 * 24 * 60 * 60 * 1000;
@@ -946,7 +2078,7 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
         matchesDate = paperDate >= start && paperDate <= end;
       }
 
-      return matchesSource && matchesCategory && matchesSearch && matchesPubType && matchesDate;
+      return matchesSource && matchesCategory && matchesSearch && matchesFeedKeywords && matchesPubType && matchesDate;
     })
     .sort((a, b) => {
       if (sortBy === 'Newest First') {
@@ -962,9 +2094,233 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
       }
       return 0;
     });
+
+  useEffect(() => {
+    if (!activeFeed) {
+      return;
+    }
+    setActiveSources(activeFeed.sources);
+    setActiveCategories(activeFeed.sourceCategories ?? {});
+  }, [activeFeed]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const runSearch = async () => {
+      try {
+        setIsSearchLoading(true);
+        setSearchError(null);
+        const response = await searchBackendPreprints({
+          query: deferredSearchQuery,
+          keywords: activeFeedKeywords,
+          sources: activeSources,
+          categories: selectedCategories,
+          publicationType: pubType,
+          sortBy,
+          startDate: effectiveSearchStartDate,
+          endDate: effectiveSearchEndDate,
+          limit: 150,
+        });
+        if (cancelled) {
+          return;
+        }
+        setRemotePreprints(response.preprints);
+        setRemoteTotal(response.total);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setSearchError(error instanceof Error ? error.message : 'Search is temporarily unavailable');
+        setRemotePreprints(null);
+        setRemoteTotal(null);
+      } finally {
+        if (!cancelled) {
+          setIsSearchLoading(false);
+        }
+      }
+    };
+
+    void runSearch();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    deferredSearchQuery,
+    activeFeedKeywords,
+    activeSources,
+    selectedCategories,
+    pubType,
+    sortBy,
+    effectiveSearchStartDate,
+    effectiveSearchEndDate,
+  ]);
+
+  const filteredPreprints = remotePreprints ?? localFilteredPreprints;
+  const resultCount = remoteTotal ?? filteredPreprints.length;
   
   return (
     <div className="p-4">
+      {customFeeds.length > 0 && (
+        <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">Central Feed</h3>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+              {activeFeed ? `Active: ${activeFeed.name}` : 'All papers'}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => onSelectFeed(null)}
+              className={`rounded-full px-3 py-2 text-sm font-medium transition ${activeFeed ? 'border border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200' : 'bg-primary text-white'}`}
+            >
+              All
+            </button>
+            {customFeeds.filter((feed) => feed.isActive).map((feed) => (
+              <button
+                key={feed.id}
+                onClick={() => onSelectFeed(feed.id)}
+                className={`rounded-full px-3 py-2 text-sm font-medium transition ${activeFeed?.id === feed.id ? 'bg-primary text-white' : 'border border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200'}`}
+              >
+                {feed.name}
+              </button>
+            ))}
+          </div>
+          {activeFeed && (
+            <>
+              <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                <span className="rounded-full border border-slate-200 px-2 py-1 dark:border-slate-700">
+                  Cadence: {activeFeed.frequency}
+                </span>
+                {feedWindowLabel && dateRange === 'All Time' && (
+                  <span className="rounded-full border border-slate-200 px-2 py-1 dark:border-slate-700">
+                    Freshness: {feedWindowLabel}
+                  </span>
+                )}
+                {activeFeed.sources.map((source) => (
+                  <span key={source} className="rounded-full border border-slate-200 px-2 py-1 dark:border-slate-700">
+                    {source}
+                    {(activeFeed.sourceCategories?.[source]?.length ?? 0) > 0 ? ` • ${activeFeed.sourceCategories?.[source]?.join(', ')}` : ''}
+                  </span>
+                ))}
+              </div>
+              {activeFeedKeywords.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-widest text-primary">
+                  {activeFeedKeywords.map((keyword) => (
+                    <span key={keyword} className="rounded-full bg-primary/10 px-2 py-1">
+                      {keyword}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {popularSearches.length > 0 && (
+        <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">Popular Searches</h3>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Usage-driven</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {popularSearches.map((item) => (
+              <button
+                key={item.query}
+                onClick={() => onApplyPopularSearch(item.query)}
+                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm text-slate-700 transition hover:border-primary hover:text-primary dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+              >
+                <span className="font-medium">{item.query}</span>
+                <span className="ml-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">{item.count} searches</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">Saved Searches</h3>
+          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{savedSearches.length} saved</span>
+        </div>
+        <div className="mb-3 flex gap-2">
+          <input
+            type="text"
+            value={newSavedSearchLabel}
+            onChange={(event) => setNewSavedSearchLabel(event.target.value)}
+            placeholder="Label this search"
+            className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-slate-800"
+          />
+          <button
+            onClick={() => {
+              const label = newSavedSearchLabel.trim() || (searchQuery?.trim() ? `Search: ${searchQuery.trim()}` : 'Current search');
+              onSaveSearch(label, {
+                sources: activeSources,
+                categories: selectedCategories,
+                publicationType: pubType,
+                sortBy,
+                dateRange,
+                startDate: searchStartDate,
+                endDate: searchEndDate,
+              })
+                .then(() => {
+                  setNewSavedSearchLabel('');
+                  showToast(`Saved search "${label}"`);
+                })
+                .catch((error) => showToast(error instanceof Error ? error.message : 'Unable to save search', 'info'));
+            }}
+            className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white shadow-lg shadow-primary/20"
+          >
+            Save
+          </button>
+        </div>
+        {savedSearches.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {savedSearches.map((savedSearch) => (
+              <div key={savedSearch.id} className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
+                <button
+                  onClick={() => {
+                    setActiveSources(savedSearch.filters.sources ?? []);
+                    const restoredCategories = (savedSearch.filters.sources ?? []).reduce<Record<string, string[]>>((acc, source) => {
+                      const categories = (savedSearch.filters.categories ?? []).filter((category) => SOURCE_CATEGORIES[source]?.includes(category));
+                      if (categories.length > 0) {
+                        acc[source] = categories;
+                      }
+                      return acc;
+                    }, {});
+                    setActiveCategories(restoredCategories);
+                    setPubType(savedSearch.filters.publicationType ?? 'All Types');
+                    setSortBy(savedSearch.filters.sortBy ?? 'Relevance');
+                    const restoredDateRange = savedSearch.filters.dateRange ?? (savedSearch.filters.startDate && savedSearch.filters.endDate ? 'Custom Range' : 'All Time');
+                    setDateRange(restoredDateRange);
+                    if (restoredDateRange === 'Custom Range') {
+                      setCustomStartDate(savedSearch.filters.startDate ? savedSearch.filters.startDate.slice(0, 10) : '');
+                      setCustomEndDate(savedSearch.filters.endDate ? savedSearch.filters.endDate.slice(0, 10) : '');
+                    } else {
+                      setCustomStartDate('');
+                      setCustomEndDate('');
+                    }
+                    onApplySavedSearch(savedSearch);
+                  }}
+                  className="text-sm font-medium text-slate-700 dark:text-slate-200"
+                >
+                  {savedSearch.label}
+                </button>
+                <button
+                  onClick={() => {
+                    onDeleteSavedSearch(savedSearch.id)
+                      .then(() => showToast(`Removed "${savedSearch.label}"`))
+                      .catch((error) => showToast(error instanceof Error ? error.message : 'Unable to delete saved search', 'info'));
+                  }}
+                  className="text-slate-400 hover:text-red-500"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="flex gap-2 overflow-x-auto no-scrollbar mb-4 items-center">
         <button 
           onClick={() => { setActiveSources([]); setActiveCategories({}); }}
@@ -1157,23 +2513,44 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
       
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-sm font-bold uppercase text-slate-500 tracking-wider">
-          {searchQuery ? `Search Results for "${searchQuery}"` : 'Trending Preprints'}
+          {deferredSearchQuery ? `Search Results for "${deferredSearchQuery}"` : 'Trending Preprints'}
         </h2>
-        {searchQuery && <span className="text-xs text-slate-400">{filteredPreprints.length} results</span>}
+        <div className="flex items-center gap-3">
+          {isSearchLoading && <span className="text-xs text-primary">Searching…</span>}
+          {deferredSearchQuery && <span className="text-xs text-slate-400">{resultCount} results</span>}
+        </div>
       </div>
+
+      {searchError && (
+        <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-200">
+          Search fell back to local filtering: {searchError}
+        </div>
+      )}
 
       <div className="space-y-4">
         {filteredPreprints.length > 0 ? (
           filteredPreprints.map(preprint => {
             const isSaved = savedPreprints.some(sp => sp.id === preprint.id);
             return (
-              <PreprintCard 
-                key={preprint.id} 
-                preprint={{ ...preprint, isSaved }} 
-                onClick={() => onPreprintClick(preprint)} 
-                onToggleSave={() => onToggleSave(preprint)}
-                onTagClick={onTagClick}
-              />
+              <div key={preprint.id} className="space-y-2">
+                <PreprintCard 
+                  preprint={{ ...preprint, isSaved }} 
+                  onClick={() => onPreprintClick(preprint)} 
+                  onToggleSave={() => onToggleSave(preprint)}
+                  onTagClick={onTagClick}
+                  showToast={showToast}
+                />
+                {(preprint.searchSnippet || (preprint.matchedFields && preprint.matchedFields.length > 0)) && (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm dark:border-slate-800 dark:bg-slate-900">
+                    {preprint.matchedFields && preprint.matchedFields.length > 0 && (
+                      <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-primary">
+                        Matched: {preprint.matchedFields.join(', ')}
+                      </p>
+                    )}
+                    {preprint.searchSnippet && <p className="text-slate-600 dark:text-slate-300">{renderHighlightedText(preprint.searchSnippet, deferredSearchQuery)}</p>}
+                  </div>
+                )}
+              </div>
             );
           })
         ) : (
@@ -1194,7 +2571,16 @@ function InstitutionDetailScreen({ institution, onBack, onUserClick, showToast }
   onUserClick: (userId: string) => void,
   showToast: (msg: string) => void 
 }) {
-  const affiliatedUsers = MOCK_USERS.filter(u => u.institutionId === institution.id || u.affiliation === institution.name);
+  const { dataset, setDataset } = useAppData();
+  const affiliatedUsers = dataset.users.filter(u => u.institutionId === institution.id || u.affiliation === institution.name);
+  const affiliatedPublications = dataset.preprints.filter((preprint) => (
+    preprint.authors.some((author) => affiliatedUsers.some((user) => user.name === author))
+  ));
+  const derivedInstitutionStats = {
+    researchers: affiliatedUsers.length || institution.stats.researchers,
+    publications: affiliatedPublications.length || institution.stats.publications,
+    citations: affiliatedPublications.reduce((sum, preprint) => sum + (preprint.citations || 0), 0) || institution.stats.citations,
+  };
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950">
@@ -1222,15 +2608,15 @@ function InstitutionDetailScreen({ institution, onBack, onUserClick, showToast }
         <div className="p-6">
           <div className="grid grid-cols-3 gap-4 mb-8">
             <div className="text-center">
-              <p className="text-xl font-bold text-primary">{institution.stats.researchers.toLocaleString()}</p>
+              <p className="text-xl font-bold text-primary">{derivedInstitutionStats.researchers.toLocaleString()}</p>
               <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Researchers</p>
             </div>
             <div className="text-center">
-              <p className="text-xl font-bold text-primary">{institution.stats.publications.toLocaleString()}</p>
+              <p className="text-xl font-bold text-primary">{derivedInstitutionStats.publications.toLocaleString()}</p>
               <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Publications</p>
             </div>
             <div className="text-center">
-              <p className="text-xl font-bold text-primary">{(institution.stats.citations / 1000000).toFixed(1)}M</p>
+              <p className="text-xl font-bold text-primary">{derivedInstitutionStats.citations >= 1000000 ? `${(derivedInstitutionStats.citations / 1000000).toFixed(1)}M` : derivedInstitutionStats.citations.toLocaleString()}</p>
               <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Citations</p>
             </div>
           </div>
@@ -1248,7 +2634,7 @@ function InstitutionDetailScreen({ institution, onBack, onUserClick, showToast }
               <span className="text-[10px] font-bold text-primary bg-primary/10 px-2 py-1 rounded-full">{affiliatedUsers.length} Found</span>
             </div>
             <div className="space-y-4">
-              {affiliatedUsers.map(user => (
+              {affiliatedUsers.length > 0 ? affiliatedUsers.map(user => (
                 <div 
                   key={user.id} 
                   onClick={() => onUserClick(user.id)}
@@ -1265,7 +2651,11 @@ function InstitutionDetailScreen({ institution, onBack, onUserClick, showToast }
                   </div>
                   <ChevronRight className="size-4 text-slate-300" />
                 </div>
-              ))}
+              )) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 p-4 text-sm text-slate-500 dark:border-slate-800">
+                  No affiliated researchers have been linked to this institution yet.
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1274,38 +2664,174 @@ function InstitutionDetailScreen({ institution, onBack, onUserClick, showToast }
   );
 }
 
-function CustomFeedsScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
-  const [activeFrequency, setActiveFrequency] = useState('Daily');
-  const [selectedSources, setSelectedSources] = useState<string[]>(['Preprints']);
-  const sources = ['Preprints', 'OA Journals', 'Clinical Trials', 'GitHub', 'Patents', 'arXiv', 'bioRxiv', 'medRxiv'];
+function CustomFeedsScreen({ onBack, onOpenFeed, showToast }: { onBack: () => void, onOpenFeed: (feedId: string) => void, showToast: (msg: string) => void }) {
+  const { dataset, setDataset } = useAppData();
+  const [activeFrequency, setActiveFrequency] = useState<CustomFeed['frequency']>('Daily');
+  const [feedName, setFeedName] = useState('');
+  const [feedKeywords, setFeedKeywords] = useState('');
+  const availableSources = Array.from(new Set<string>(dataset.preprints.map(preprint => preprint.source)));
+  const [selectedSources, setSelectedSources] = useState<string[]>(availableSources.slice(0, 1));
+  const [selectedSourceCategories, setSelectedSourceCategories] = useState<Record<string, string[]>>({});
+  const [openSourceMenu, setOpenSourceMenu] = useState<string | null>(null);
+  const sources = Array.from(new Set<string>([...availableSources, 'Clinical Trials', 'Patents']));
+  const activeFeedCount = dataset.customFeeds.filter((feed) => feed.isActive).length;
 
   const toggleSource = (source: string) => {
     if (selectedSources.includes(source)) {
       setSelectedSources(selectedSources.filter(s => s !== source));
+      setSelectedSourceCategories((prev) => {
+        const next = { ...prev };
+        delete next[source];
+        return next;
+      });
+      if (openSourceMenu === source) {
+        setOpenSourceMenu(null);
+      }
     } else {
       setSelectedSources([...selectedSources, source]);
+      setOpenSourceMenu(source);
     }
+  };
+
+  const toggleFeedCategory = (source: string, category: string) => {
+    const current = selectedSourceCategories[source] ?? [];
+    setSelectedSourceCategories((prev) => ({
+      ...prev,
+      [source]: current.includes(category)
+        ? current.filter((item) => item !== category)
+        : [...current, category],
+    }));
+  };
+
+  const handleCreateFeed = () => {
+    if (!feedName.trim()) {
+      showToast('Name the feed first');
+      return;
+    }
+    if (selectedSources.length === 0) {
+      showToast('Select at least one source');
+      return;
+    }
+    const sourceCategoryEntries = Object.entries(selectedSourceCategories) as Array<[string, string[]]>;
+    const sourceCategories = Object.fromEntries(
+      sourceCategoryEntries.filter(([, categories]) => categories.length > 0),
+    ) as Record<string, string[]>;
+    const newFeed: CustomFeed = {
+      id: `feed-${Date.now()}`,
+      name: feedName.trim(),
+      keywords: feedKeywords.split(',').map((value) => value.trim()).filter(Boolean),
+      sources: selectedSources,
+      sourceCategories,
+      frequency: activeFrequency,
+      isActive: true,
+    };
+    setDataset((prev) => ({
+      ...prev,
+      customFeeds: [newFeed, ...prev.customFeeds],
+      metadata: {
+        ...prev.metadata,
+        lastUpdated: new Date().toISOString(),
+      },
+    }));
+    showToast(`Feed "${newFeed.name}" created`);
+    onOpenFeed(newFeed.id);
+  };
+
+  const handleToggleFeedActive = (feedId: string) => {
+    let nextStatus = true;
+    setDataset((prev) => {
+      const customFeeds = prev.customFeeds.map((feed) => {
+        if (feed.id !== feedId) {
+          return feed;
+        }
+        nextStatus = !feed.isActive;
+        return {
+          ...feed,
+          isActive: nextStatus,
+        };
+      });
+      return {
+        ...prev,
+        customFeeds,
+        metadata: {
+          ...prev.metadata,
+          lastUpdated: new Date().toISOString(),
+        },
+      };
+    });
+    showToast(nextStatus ? 'Feed resumed' : 'Feed paused');
+  };
+
+  const handleDeleteFeed = (feedId: string) => {
+    const target = dataset.customFeeds.find((feed) => feed.id === feedId);
+    if (!target) {
+      return;
+    }
+    setDataset((prev) => ({
+      ...prev,
+      customFeeds: prev.customFeeds.filter((feed) => feed.id !== feedId),
+      metadata: {
+        ...prev.metadata,
+        lastUpdated: new Date().toISOString(),
+      },
+    }));
+    showToast(`Removed "${target.name}"`);
   };
 
   return (
     <div className="p-4">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-xl font-bold">Active Feeds</h2>
-        <span className="text-xs font-semibold bg-primary/10 text-primary px-2 py-1 rounded-full">3 Active</span>
+        <span className="text-xs font-semibold bg-primary/10 text-primary px-2 py-1 rounded-full">{activeFeedCount} Active</span>
       </div>
 
       <div className="space-y-3 mb-8">
-        {MOCK_CUSTOM_FEEDS.map(feed => (
+        {dataset.customFeeds.map(feed => (
           <div key={feed.id} className="flex items-center gap-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
             <div className="flex items-center justify-center rounded-lg bg-primary/10 text-primary shrink-0 size-12">
               {feed.name.includes('Quantum') ? <Zap className="size-6" /> : 
                feed.name.includes('Biology') ? <BookOpen className="size-6" /> : <TrendingUp className="size-6" />}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-base font-semibold truncate">{feed.name}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-base font-semibold truncate">{feed.name}</p>
+                <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-widest ${feed.isActive ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300' : 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300'}`}>
+                  {feed.isActive ? 'Active' : 'Paused'}
+                </span>
+              </div>
               <p className="text-sm text-slate-500 dark:text-slate-400 truncate">Updates: {feed.frequency} • {feed.sources.join(', ')}</p>
+              {feed.keywords.length > 0 && (
+                <p className="mt-1 text-[10px] text-slate-400 truncate">
+                  Keywords: {feed.keywords.join(', ')}
+                </p>
+              )}
+              {feed.sourceCategories && Object.keys(feed.sourceCategories).length > 0 && (
+                <p className="text-[10px] text-slate-400 truncate mt-1">
+                  {(Object.entries(feed.sourceCategories) as Array<[string, string[]]>).map(([source, categories]) => `${source}: ${categories.join(', ')}`).join(' • ')}
+                </p>
+              )}
             </div>
-            <MoreVertical className="text-slate-400 size-5 cursor-pointer" />
+            <div className="flex flex-col items-end gap-2">
+              <button
+                onClick={() => onOpenFeed(feed.id)}
+                disabled={!feed.isActive}
+                className={`text-xs font-bold uppercase tracking-widest ${feed.isActive ? 'text-primary' : 'text-slate-400 dark:text-slate-500'}`}
+              >
+                Open
+              </button>
+              <button
+                onClick={() => handleToggleFeedActive(feed.id)}
+                className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400"
+              >
+                {feed.isActive ? 'Pause' : 'Resume'}
+              </button>
+              <button
+                onClick={() => handleDeleteFeed(feed.id)}
+                className="text-[10px] font-bold uppercase tracking-widest text-rose-500"
+              >
+                Remove
+              </button>
+            </div>
           </div>
         ))}
       </div>
@@ -1327,6 +2853,19 @@ function CustomFeedsScreen({ onBack, showToast }: { onBack: () => void, showToas
             <input 
               type="text" 
               placeholder="e.g. CRISPR, Solid State, Graphene"
+              value={feedKeywords}
+              onChange={(e) => setFeedKeywords(e.target.value)}
+              className="w-full bg-white/10 border border-white/20 rounded-lg text-white placeholder:text-white/50 focus:ring-white focus:border-white py-3 px-4 outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider mb-2 opacity-80">Feed Name</label>
+            <input
+              type="text"
+              placeholder="e.g. Multi-source CRISPR Watch"
+              value={feedName}
+              onChange={(e) => setFeedName(e.target.value)}
               className="w-full bg-white/10 border border-white/20 rounded-lg text-white placeholder:text-white/50 focus:ring-white focus:border-white py-3 px-4 outline-none"
             />
           </div>
@@ -1335,13 +2874,50 @@ function CustomFeedsScreen({ onBack, showToast }: { onBack: () => void, showToas
             <label className="block text-xs font-bold uppercase tracking-wider mb-2 opacity-80">Data Sources</label>
             <div className="flex flex-wrap gap-2">
               {sources.map((source) => (
-                <button 
-                  key={source} 
-                  onClick={() => toggleSource(source)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${selectedSources.includes(source) ? 'bg-white text-primary' : 'bg-white/20 text-white hover:bg-white/30'}`}
-                >
-                  {source}
-                </button>
+                <div key={source} className="relative">
+                  <button 
+                    onClick={() => toggleSource(source)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-2 ${selectedSources.includes(source) ? 'bg-white text-primary' : 'bg-white/20 text-white hover:bg-white/30'}`}
+                  >
+                    <span>{source}</span>
+                    {SOURCE_CATEGORIES[source] && <ChevronRight className={`size-3 transition-transform ${openSourceMenu === source ? 'rotate-90' : ''}`} />}
+                  </button>
+                  <AnimatePresence>
+                    {selectedSources.includes(source) && openSourceMenu === source && SOURCE_CATEGORIES[source] && (
+                      <>
+                        <div className="fixed inset-0 z-30" onClick={() => setOpenSourceMenu(null)} />
+                        <motion.div
+                          initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                          className="absolute left-0 top-full z-40 mt-2 w-72 rounded-2xl border border-white/20 bg-slate-950/95 p-4 shadow-2xl"
+                        >
+                          <div className="mb-3 flex items-center justify-between">
+                            <h4 className="text-[10px] font-bold uppercase tracking-widest text-white/60">{source} Categories</h4>
+                            <button
+                              onClick={() => setSelectedSourceCategories((prev) => ({ ...prev, [source]: [] }))}
+                              className="text-[10px] font-bold uppercase tracking-widest text-white/70"
+                            >
+                              Clear
+                            </button>
+                          </div>
+                          <div className="space-y-1 max-h-64 overflow-y-auto">
+                            {SOURCE_CATEGORIES[source].map((category) => (
+                              <button
+                                key={category}
+                                onClick={() => toggleFeedCategory(source, category)}
+                                className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs font-medium transition-all ${selectedSourceCategories[source]?.includes(category) ? 'bg-white text-primary' : 'bg-white/10 text-white hover:bg-white/20'}`}
+                              >
+                                <span className="truncate pr-2">{category}</span>
+                                {selectedSourceCategories[source]?.includes(category) ? <Check className="size-3.5" /> : <Plus className="size-3.5 opacity-40" />}
+                              </button>
+                            ))}
+                          </div>
+                        </motion.div>
+                      </>
+                    )}
+                  </AnimatePresence>
+                </div>
               ))}
             </div>
           </div>
@@ -1362,7 +2938,7 @@ function CustomFeedsScreen({ onBack, showToast }: { onBack: () => void, showToas
           </div>
 
           <button 
-            onClick={() => showToast('New custom feed created!')}
+            onClick={handleCreateFeed}
             className="w-full bg-white text-primary font-bold py-3.5 rounded-xl shadow-md mt-2 transition-transform active:scale-95"
           >
             Launch Research Stream
@@ -1373,14 +2949,34 @@ function CustomFeedsScreen({ onBack, showToast }: { onBack: () => void, showToas
   );
 }
 
-function PreprintCard({ preprint, onClick, onToggleSave, onTagClick, onAuthorClick }: { 
+function PreprintCard({ preprint, onClick, onToggleSave, onTagClick, onAuthorClick, showToast }: { 
   preprint: Preprint, 
   onClick: () => void, 
   onToggleSave?: () => void, 
   onTagClick?: (tag: string) => void,
   onAuthorClick?: (author: string) => void,
+  showToast?: (msg: string, type?: 'success' | 'info') => void,
   key?: string | number
 }) {
+  const handleOpenAsset = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (showToast) {
+      openPreprintAsset(preprint, showToast);
+      return;
+    }
+    const targetUrl = preprint.pdfUrl ?? preprint.url;
+    if (targetUrl) {
+      window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  const handleCopyReference = async (event: React.MouseEvent) => {
+    event.stopPropagation();
+    const value = preprint.doi ?? `${window.location.origin}/paper/${preprint.id}`;
+    await copyText(value);
+    showToast?.(preprint.doi ? 'DOI copied to clipboard' : 'Paper link copied to clipboard');
+  };
+
   return (
     <div 
       className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm hover:border-primary/30 transition-all cursor-pointer group"
@@ -1389,16 +2985,20 @@ function PreprintCard({ preprint, onClick, onToggleSave, onTagClick, onAuthorCli
       <div className="flex justify-between items-start gap-3 mb-2">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-2">
-            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase ${
-              preprint.source === 'arXiv' ? 'bg-primary/10 text-primary' : 
-              preprint.source === 'bioRxiv' ? 'bg-emerald-100 text-emerald-700' : 
-              preprint.source === 'medRxiv' ? 'bg-blue-100 text-blue-700' :
-              preprint.source === 'PhilPapers' ? 'bg-amber-100 text-amber-700' :
-              preprint.source === 'OA Journals' || preprint.source === 'OA Articles' ? 'bg-purple-100 text-purple-700' :
-              'bg-slate-100 text-slate-700'
-            }`}>
+            <button
+              type="button"
+              onClick={handleOpenAsset}
+              className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase ${
+                preprint.source === 'arXiv' ? 'bg-primary/10 text-primary' : 
+                preprint.source === 'bioRxiv' ? 'bg-emerald-100 text-emerald-700' : 
+                preprint.source === 'medRxiv' ? 'bg-blue-100 text-blue-700' :
+                preprint.source === 'PhilPapers' ? 'bg-amber-100 text-amber-700' :
+                preprint.source === 'OA Journals' || preprint.source === 'OA Articles' ? 'bg-purple-100 text-purple-700' :
+                'bg-slate-100 text-slate-700'
+              }`}
+            >
               {preprint.source}
-            </span>
+            </button>
             <span className="text-[10px] text-slate-400 font-medium">{preprint.date}</span>
             {preprint.isSaved && (
               <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded">
@@ -1457,13 +3057,18 @@ function PreprintCard({ preprint, onClick, onToggleSave, onTagClick, onAuthorCli
             </span>
           )}
         </div>
-        <div className="flex items-center gap-0.5">
-          {[1, 2, 3, 4, 5].map((star) => (
-            <Zap 
-              key={star} 
-              className={`size-3 ${star <= (preprint.userRating || preprint.rating || 0) ? 'text-amber-400 fill-amber-400' : 'text-slate-200'}`} 
-            />
-          ))}
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={handleCopyReference} className="rounded-full p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-primary dark:hover:bg-slate-800" title={preprint.doi ? 'Copy DOI' : 'Copy paper link'}>
+            <Share2 className="size-3.5" />
+          </button>
+          <div className="flex items-center gap-0.5">
+            {[1, 2, 3, 4, 5].map((star) => (
+              <Zap 
+                key={star} 
+                className={`size-3 ${star <= (preprint.userRating || preprint.rating || 0) ? 'text-amber-400 fill-amber-400' : 'text-slate-200'}`} 
+              />
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -1479,20 +3084,27 @@ function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPrep
   onAuthorClick: (author: string) => void,
   showToast: (msg: string) => void
 }) {
+  const { dataset, setDataset } = useAppData();
   const [activeTab, setActiveTab] = useState<'saved' | 'collections'>('saved');
+  const [savedSort, setSavedSort] = useState<'recent' | 'rating'>('recent');
   const [collectionSort, setCollectionSort] = useState<'name' | 'paperCount' | 'updatedAt'>('updatedAt');
   const [isCreating, setIsCreating] = useState(false);
   const [newCollection, setNewCollection] = useState({ name: '', description: '', imageUrl: '' });
   const [searchQuery, setSearchQuery] = useState('');
 
-  const filteredSaved = savedPreprints.filter(p => 
-    p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    p.authors.some(a => a.toLowerCase().includes(searchQuery.toLowerCase())) ||
-    p.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  const filteredSaved = savedPreprints.filter((preprint) => matchesPreprintSearchQuery(preprint, searchQuery));
+  const sortedSaved = [...filteredSaved].sort((left, right) => {
+    if (savedSort === 'rating') {
+      return (right.userRating ?? right.rating ?? 0) - (left.userRating ?? left.rating ?? 0);
+    }
+    return savedPreprints.findIndex((preprint) => preprint.id === right.id) - savedPreprints.findIndex((preprint) => preprint.id === left.id);
+  });
 
-  const sortedCollections = [...MOCK_COLLECTIONS]
-    .filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()))
+  const sortedCollections = [...dataset.collections]
+    .filter((collection) =>
+      collection.name.toLowerCase().includes(searchQuery.toLowerCase())
+      || (collection.description ?? '').toLowerCase().includes(searchQuery.toLowerCase())
+    )
     .sort((a, b) => {
       if (collectionSort === 'name') return a.name.localeCompare(b.name);
       if (collectionSort === 'paperCount') return b.paperCount - a.paperCount;
@@ -1507,6 +3119,26 @@ function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPrep
       showToast('Please enter a collection name');
       return;
     }
+    const createdCollection: Collection = {
+      id: `collection-${Date.now()}`,
+      name: newCollection.name.trim(),
+      description: newCollection.description.trim() || 'Custom collection',
+      preprintIds: [],
+      sharedWith: [],
+      shareLinkToken: `collection-${Date.now().toString(36)}`,
+      paperCount: 0,
+      totalCitations: 0,
+      updatedAt: 'Just now',
+      imageUrl: newCollection.imageUrl.trim() || `https://picsum.photos/seed/${encodeURIComponent(newCollection.name.trim())}/400/400`,
+    };
+    setDataset(prev => ({
+      ...prev,
+      collections: [createdCollection, ...prev.collections],
+      metadata: {
+        ...prev.metadata,
+        lastUpdated: new Date().toISOString(),
+      },
+    }));
     showToast(`Collection "${newCollection.name}" created!`);
     setIsCreating(false);
     setNewCollection({ name: '', description: '', imageUrl: '' });
@@ -1547,20 +3179,28 @@ function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPrep
           <div className="space-y-4">
             <div className="flex gap-2 overflow-x-auto no-scrollbar mb-4">
               <button 
-                onClick={() => showToast('Sorting by Recently Saved')}
-                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1 whitespace-nowrap"
+                onClick={() => setSavedSort('recent')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1 whitespace-nowrap border ${
+                  savedSort === 'recent'
+                    ? 'bg-primary text-white border-primary'
+                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+                }`}
               >
                 Recently Saved <ChevronRight className="size-4 rotate-90" />
               </button>
               <button 
-                onClick={() => showToast('Sorting by Highest Rated')}
-                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1 whitespace-nowrap"
+                onClick={() => setSavedSort('rating')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1 whitespace-nowrap border ${
+                  savedSort === 'rating'
+                    ? 'bg-primary text-white border-primary'
+                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+                }`}
               >
                 Highest Rated <ChevronRight className="size-4 rotate-90" />
               </button>
             </div>
-            {filteredSaved.length > 0 ? (
-              filteredSaved.map(p => (
+            {sortedSaved.length > 0 ? (
+              sortedSaved.map(p => (
                 <PreprintCard 
                   key={p.id} 
                   preprint={{ ...p, isSaved: true }} 
@@ -1724,9 +3364,10 @@ function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPrep
   );
 }
 
-function CollectionDetailScreen({ collection, onBack, savedPreprints, onToggleSave, onPreprintClick, onTagClick, onAuthorClick, showToast }: { 
+function CollectionDetailScreen({ collection, onBack, onShareCollection, savedPreprints, onToggleSave, onPreprintClick, onTagClick, onAuthorClick, showToast }: { 
   collection: Collection, 
   onBack: () => void, 
+  onShareCollection: () => void,
   savedPreprints: Preprint[], 
   onToggleSave: (p: Preprint) => void,
   onPreprintClick: (p: Preprint) => void,
@@ -1734,18 +3375,89 @@ function CollectionDetailScreen({ collection, onBack, savedPreprints, onToggleSa
   onAuthorClick: (author: string) => void,
   showToast: (msg: string) => void
 }) {
+  const { dataset, setDataset } = useAppData();
+  const collectionRecord = dataset.collections.find((item) => item.id === collection.id) ?? collection;
   const [isEditing, setIsEditing] = useState(false);
+  const [isManagingPapers, setIsManagingPapers] = useState(false);
+  const [filterMode, setFilterMode] = useState<'all' | 'recent'>('all');
   const [editData, setEditData] = useState({ 
-    name: collection.name, 
-    description: collection.description || '',
-    imageUrl: collection.imageUrl
+    name: collectionRecord.name, 
+    description: collectionRecord.description || '',
+    imageUrl: collectionRecord.imageUrl
   });
+  const collectionPreprints = dataset.preprints.filter((preprint) => collectionRecord.preprintIds?.includes(preprint.id));
+  const visiblePreprints = filterMode === 'recent' ? sortPreprintsByRecent(collectionPreprints) : collectionPreprints;
+  const availableSavedPreprints = savedPreprints.filter((preprint) => !collectionRecord.preprintIds?.includes(preprint.id));
+
+  useEffect(() => {
+    setEditData({
+      name: collectionRecord.name,
+      description: collectionRecord.description || '',
+      imageUrl: collectionRecord.imageUrl,
+    });
+  }, [collectionRecord.id, collectionRecord.name, collectionRecord.description, collectionRecord.imageUrl]);
+
+  const updateCollectionMembership = (preprintIds: string[]) => {
+    setDataset((prev) => ({
+      ...prev,
+      collections: prev.collections.map((item) => item.id === collectionRecord.id ? {
+        ...item,
+        preprintIds,
+        paperCount: preprintIds.length,
+        totalCitations: prev.preprints
+          .filter((preprint) => preprintIds.includes(preprint.id))
+          .reduce((sum, preprint) => sum + (preprint.citations ?? 0), 0),
+        updatedAt: 'Just now',
+      } : item),
+      metadata: {
+        ...prev.metadata,
+        lastUpdated: new Date().toISOString(),
+      },
+    }));
+  };
+
+  const handleToggleCollectionPaper = (preprintId: string) => {
+    const currentIds = collectionRecord.preprintIds ?? [];
+    const nextIds = currentIds.includes(preprintId)
+      ? currentIds.filter((id) => id !== preprintId)
+      : [...currentIds, preprintId];
+    updateCollectionMembership(nextIds);
+  };
+
+  const handleCopyCollectionLink = async () => {
+    try {
+      const token = collectionRecord.shareLinkToken || collectionRecord.id;
+      await copyText(`${window.location.origin}/collections/${token}`);
+      showToast('Collection link copied to clipboard!');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to copy collection link');
+    }
+  };
 
   const handleSave = () => {
     if (!editData.name.trim()) {
       showToast('Collection name cannot be empty');
       return;
     }
+    setDataset(prev => ({
+      ...prev,
+      collections: prev.collections.map(item =>
+        item.id === collection.id
+          ? {
+              ...item,
+              name: editData.name.trim(),
+              description: editData.description.trim(),
+              imageUrl: editData.imageUrl.trim() || item.imageUrl,
+              shareLinkToken: item.shareLinkToken || item.id,
+              updatedAt: 'Just now',
+            }
+          : item,
+      ),
+      metadata: {
+        ...prev.metadata,
+        lastUpdated: new Date().toISOString(),
+      },
+    }));
     showToast(`Collection "${editData.name}" updated!`);
     setIsEditing(false);
   };
@@ -1757,51 +3469,63 @@ function CollectionDetailScreen({ collection, onBack, savedPreprints, onToggleSa
           <ArrowLeft className="cursor-pointer" onClick={onBack} />
           <div className="flex-1">
             <div className="flex items-center gap-2">
-              <h2 className="text-xl font-bold">{collection.name}</h2>
+              <h2 className="text-xl font-bold">{collectionRecord.name}</h2>
               <Edit className="size-4 text-slate-400 cursor-pointer hover:text-primary transition-colors" onClick={() => setIsEditing(true)} />
             </div>
             <div className="flex items-center gap-3 text-xs text-slate-500">
-              <span>{collection.paperCount} preprints</span>
+              <span>{collectionRecord.paperCount} preprints</span>
               <span>•</span>
-              <span>Updated {collection.updatedAt}</span>
-              {collection.totalCitations && (
+              <span>Updated {collectionRecord.updatedAt}</span>
+              {collectionRecord.totalCitations && (
                 <>
                   <span>•</span>
                   <span className="flex items-center gap-1 font-bold text-primary">
                     <Quote className="size-3" />
-                    {collection.totalCitations.toLocaleString()} Citations
+                    {collectionRecord.totalCitations.toLocaleString()} Citations
                   </span>
                 </>
               )}
             </div>
           </div>
-          <Share2 className="text-primary cursor-pointer" onClick={() => showToast('Collection link copied to clipboard!')} />
+          <Share2 className="text-primary cursor-pointer" onClick={handleCopyCollectionLink} />
         </div>
         
-        {collection.description && (
+        {collectionRecord.description && (
           <p className="text-sm text-slate-600 dark:text-slate-400 mb-4 leading-relaxed">
-            {collection.description}
+            {collectionRecord.description}
           </p>
         )}
 
         <div className="flex gap-2 overflow-x-auto no-scrollbar">
           <button 
-            onClick={() => showToast('Showing all papers in collection')}
-            className="bg-primary text-white px-4 py-1.5 rounded-lg text-sm font-medium"
+            onClick={() => setFilterMode('all')}
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium ${filterMode === 'all' ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-800'}`}
           >
             All Papers
           </button>
           <button 
-            onClick={() => showToast('Showing recently added papers')}
-            className="bg-slate-100 dark:bg-slate-800 px-4 py-1.5 rounded-lg text-sm font-medium"
+            onClick={() => setFilterMode('recent')}
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium ${filterMode === 'recent' ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-800'}`}
           >
             Recently Added
+          </button>
+          <button 
+            onClick={() => setIsManagingPapers(true)}
+            className="bg-slate-100 dark:bg-slate-800 px-4 py-1.5 rounded-lg text-sm font-medium"
+          >
+            Manage Papers
+          </button>
+          <button
+            onClick={onShareCollection}
+            className="bg-slate-100 dark:bg-slate-800 px-4 py-1.5 rounded-lg text-sm font-medium"
+          >
+            Share Access
           </button>
         </div>
       </div>
       
       <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar">
-        {MOCK_PREPRINTS.map(p => {
+        {visiblePreprints.length > 0 ? visiblePreprints.map(p => {
           const isSaved = savedPreprints.some(sp => sp.id === p.id);
           return (
             <PreprintCard 
@@ -1813,10 +3537,76 @@ function CollectionDetailScreen({ collection, onBack, savedPreprints, onToggleSa
               onAuthorClick={onAuthorClick}
             />
           );
-        })}
+        }) : (
+          <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">
+            <BookMarked className="mx-auto mb-4 size-10 text-slate-300" />
+            <h3 className="text-lg font-bold">This collection is empty</h3>
+            <p className="mt-2 text-sm text-slate-500">Add saved papers to turn this into a real working collection.</p>
+            <button
+              onClick={() => setIsManagingPapers(true)}
+              className="mt-4 rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white"
+            >
+              Add Saved Papers
+            </button>
+          </div>
+        )}
       </div>
 
       <AnimatePresence>
+        {isManagingPapers && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-end md:items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="bg-white dark:bg-slate-900 w-full max-w-xl rounded-t-3xl md:rounded-3xl p-6 shadow-2xl"
+            >
+              <div className="mb-6 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-bold">Manage Papers</h3>
+                  <p className="text-sm text-slate-500">Add or remove saved papers in this collection.</p>
+                </div>
+                <button onClick={() => setIsManagingPapers(false)} className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800">
+                  <X className="size-6" />
+                </button>
+              </div>
+              <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+                {[...collectionPreprints, ...availableSavedPreprints].map((preprint) => {
+                  const included = collectionRecord.preprintIds?.includes(preprint.id) ?? false;
+                  return (
+                    <button
+                      key={preprint.id}
+                      onClick={() => handleToggleCollectionPaper(preprint.id)}
+                      className={`flex w-full items-start gap-3 rounded-2xl border p-4 text-left ${
+                        included
+                          ? 'border-primary bg-primary/5'
+                          : 'border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950'
+                      }`}
+                    >
+                      <div className={`mt-0.5 flex size-5 items-center justify-center rounded-md border ${included ? 'border-primary bg-primary text-white' : 'border-slate-300'}`}>
+                        {included && <Check className="size-3.5" />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold">{preprint.title}</p>
+                        <p className="mt-1 text-xs text-slate-500">{preprint.authors.join(', ')} • {preprint.source}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+                {collectionPreprints.length === 0 && availableSavedPreprints.length === 0 && (
+                  <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-800">
+                    Save some papers first, then add them to this collection.
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
         {isEditing && (
           <motion.div 
             initial={{ opacity: 0 }}
@@ -1902,24 +3692,42 @@ function CollectionDetailScreen({ collection, onBack, savedPreprints, onToggleSa
   );
 }
 
-function ShareModal({ preprint, onClose, showToast }: { preprint: Preprint, onClose: () => void, showToast: (msg: string) => void }) {
+function ShareModal({ preprint, onClose, onShare, showToast }: { preprint: Preprint, onClose: () => void, onShare: (preprintId: string, recipientIds: string[]) => Promise<void>, showToast: (msg: string) => void }) {
+  const { dataset } = useAppData();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
+  const shareUrl = `${window.location.origin}/paper/${preprint.id}`;
+  const shareText = `Reading "${preprint.title}" on Preprint Explorer`;
 
-  const filteredUsers = MOCK_USERS.filter(u => 
+  const filteredUsers = dataset.users.filter(u => 
     u.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
     u.affiliation.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleShareInternal = () => {
+  const handleShareInternal = async () => {
     if (selectedUsers.length === 0) return;
+    await onShare(preprint.id, selectedUsers);
     showToast(`Shared with ${selectedUsers.length} researchers!`);
     onClose();
   };
 
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(`https://researchflow.io/paper/${preprint.id}`);
+  const handleCopyLink = async () => {
+    await copyText(shareUrl);
     showToast('Link copied to clipboard!');
+  };
+
+  const openExternalShare = (url: string, successMessage: string) => {
+    window.open(url, '_blank', 'noopener,noreferrer');
+    showToast(successMessage);
+    onClose();
+  };
+
+  const handleEmailShare = () => {
+    const subject = encodeURIComponent(`Preprint recommendation: ${preprint.title}`);
+    const body = encodeURIComponent(`${shareText}\n\n${shareUrl}`);
+    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    showToast('Opening your email client...');
+    onClose();
   };
 
   const toggleUser = (userId: string) => {
@@ -2003,7 +3811,7 @@ function ShareModal({ preprint, onClose, showToast }: { preprint: Preprint, onCl
                 <span className="text-[10px] font-bold uppercase">Copy</span>
               </button>
               <button 
-                onClick={() => { showToast('Redirecting to Twitter...'); onClose(); }}
+                onClick={() => openExternalShare(`https://twitter.com/intent/tweet?text=${encodeURIComponent(`${shareText} ${shareUrl}`)}`, 'Opening X/Twitter share...')}
                 className="flex flex-col items-center gap-2 group"
               >
                 <div className="size-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400 group-hover:bg-[#1DA1F2] group-hover:text-white transition-all">
@@ -2012,7 +3820,7 @@ function ShareModal({ preprint, onClose, showToast }: { preprint: Preprint, onCl
                 <span className="text-[10px] font-bold uppercase">Twitter</span>
               </button>
               <button 
-                onClick={() => { showToast('Redirecting to LinkedIn...'); onClose(); }}
+                onClick={() => openExternalShare(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`, 'Opening LinkedIn share...')}
                 className="flex flex-col items-center gap-2 group"
               >
                 <div className="size-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400 group-hover:bg-[#0A66C2] group-hover:text-white transition-all">
@@ -2021,7 +3829,7 @@ function ShareModal({ preprint, onClose, showToast }: { preprint: Preprint, onCl
                 <span className="text-[10px] font-bold uppercase">LinkedIn</span>
               </button>
               <button 
-                onClick={() => { showToast('Opening Email Client...'); onClose(); }}
+                onClick={handleEmailShare}
                 className="flex flex-col items-center gap-2 group"
               >
                 <div className="size-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400 group-hover:bg-emerald-500 group-hover:text-white transition-all">
@@ -2037,7 +3845,25 @@ function ShareModal({ preprint, onClose, showToast }: { preprint: Preprint, onCl
   );
 }
 
-function UserListModal({ title, users, onClose }: { title: string, users: string[], onClose: () => void }) {
+type UserListEntry = {
+  id: string;
+  label: string;
+  meta?: string;
+  lookupValue?: string;
+};
+
+function UserListModal({ title, users, onClose, onUserSelect, showToast }: { title: string, users: UserListEntry[], onClose: () => void, onUserSelect?: (userLookup: string) => void, showToast?: (msg: string) => void }) {
+  const handleSelect = async (user: UserListEntry) => {
+    if (onUserSelect) {
+      onUserSelect(user.lookupValue ?? user.label);
+      onClose();
+      return;
+    }
+    await copyText(user.label);
+    showToast?.(`${user.label} copied to clipboard`);
+    onClose();
+  };
+
   return (
     <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
       <motion.div 
@@ -2053,15 +3879,21 @@ function UserListModal({ title, users, onClose }: { title: string, users: string
         </div>
         <div className="p-6 max-h-[60vh] overflow-y-auto no-scrollbar space-y-4">
           {users.length > 0 ? users.map((user, idx) => (
-            <div key={idx} className="flex items-center gap-3 p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer">
+            <button
+              key={user.id || idx}
+              type="button"
+              onClick={() => void handleSelect(user)}
+              className="flex w-full items-center gap-3 rounded-xl p-2 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
+            >
               <div className="size-10 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-500 font-bold">
-                {user.charAt(0)}
+                {user.label.charAt(0)}
               </div>
               <div>
-                <p className="text-sm font-bold">{user}</p>
-                <p className="text-[10px] text-slate-400 uppercase tracking-widest">Researcher</p>
+                <p className="text-sm font-bold">{user.label}</p>
+                <p className="text-[10px] text-slate-400 uppercase tracking-widest">{user.meta ?? 'Researcher'}</p>
               </div>
-            </div>
+              <ChevronRight className="ml-auto size-4 text-slate-300" />
+            </button>
           )) : (
             <p className="text-center text-slate-500 py-8">No users found.</p>
           )}
@@ -2071,8 +3903,9 @@ function UserListModal({ title, users, onClose }: { title: string, users: string
   );
 }
 
-function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagClick, onAuthorClick, showToast, onCite, showOutline, setShowOutline }: { 
+function ReaderScreen({ preprint, currentUser, onBack, onToggleSave, isSaved, onRate, onTagClick, onAuthorClick, showToast, onCite, onReport, showOutline, setShowOutline }: { 
   preprint: Preprint, 
+  currentUser: User,
   onBack: () => void,
   onToggleSave: (p: Preprint) => void, 
   isSaved: boolean,
@@ -2081,13 +3914,24 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
   onAuthorClick: (author: string) => void,
   showToast: (msg: string) => void,
   onCite: () => void,
+  onReport: () => void,
   showOutline: boolean,
   setShowOutline: (show: boolean) => void
 }) {
   const [readerTheme, setReaderTheme] = useState<'light' | 'dark' | 'sepia'>('light');
   const [commentText, setCommentText] = useState('');
   const [comments, setComments] = useState<PaperComment[]>(preprint.comments || []);
-  const [userListModal, setUserListModal] = useState<{ title: string, users: string[] } | null>(null);
+  const [userListModal, setUserListModal] = useState<{ title: string, users: UserListEntry[] } | null>(null);
+  const [replyTarget, setReplyTarget] = useState<PaperComment | null>(null);
+  const sectionRefs = {
+    abstract: useRef<HTMLHeadingElement | null>(null),
+    intro: useRef<HTMLHeadingElement | null>(null),
+    methods: useRef<HTMLHeadingElement | null>(null),
+    results: useRef<HTMLHeadingElement | null>(null),
+    conclusion: useRef<HTMLHeadingElement | null>(null),
+    refs: useRef<HTMLDivElement | null>(null),
+    comments: useRef<HTMLDivElement | null>(null),
+  };
 
   const handleRateWithToast = (rating: number) => {
     onRate(rating);
@@ -2103,22 +3947,51 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
     if (!commentText.trim()) return;
     const newComment: PaperComment = {
       id: Date.now().toString(),
-      userId: 'aris_thorne',
-      userName: 'Dr. Aris Thorne',
-      userImageUrl: 'https://picsum.photos/seed/profile/200/200',
-      text: commentText,
+      userId: currentUser.id,
+      userName: currentUser.name,
+      userImageUrl: currentUser.imageUrl,
+      text: replyTarget ? `@${replyTarget.userName} ${commentText}` : commentText,
       date: 'Just now',
       likes: 0
     };
     setComments([newComment, ...comments]);
     setCommentText('');
+    setReplyTarget(null);
     showToast('Comment posted!');
+  };
+
+  const handleLikeComment = (commentId: string) => {
+    setComments((current) => current.map((comment) => (
+      comment.id === commentId
+        ? { ...comment, likes: comment.likes + 1 }
+        : comment
+    )));
+    showToast('Comment liked');
+  };
+
+  const handleReplyToComment = (comment: PaperComment) => {
+    setReplyTarget(comment);
+    setCommentText((current) => current.startsWith(`@${comment.userName}`) ? current : `@${comment.userName} `);
   };
 
   const themeClasses = {
     light: 'bg-white text-slate-900',
     dark: 'bg-slate-950 text-slate-100',
     sepia: 'bg-[#f4ecd8] text-[#5b4636]'
+  };
+
+  const navigateToSection = (sectionId: keyof typeof sectionRefs) => {
+    sectionRefs[sectionId].current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setShowOutline(false);
+  };
+
+  const handleOpenAsset = () => {
+    openPreprintAsset(preprint, showToast);
+  };
+
+  const handleReferenceAction = async (reference: string) => {
+    await copyText(reference);
+    showToast('Reference copied to clipboard');
   };
 
   return (
@@ -2167,6 +4040,13 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
             <Quote className="size-3" />
             Cite
           </button>
+          <button
+            onClick={onReport}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 transition-colors dark:bg-amber-500/10 dark:text-amber-300"
+          >
+            <AlertTriangle className="size-3" />
+            Report
+          </button>
           <button 
             onClick={handleToggleSaveWithToast}
             className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors"
@@ -2208,14 +4088,14 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
         <div className="flex gap-6 mb-8 border-y border-black/5 dark:border-white/5 py-4">
           <div 
             className="flex flex-col cursor-pointer group"
-            onClick={() => setUserListModal({ title: 'Cited By', users: preprint.citedBy || [] })}
+            onClick={() => setUserListModal({ title: 'Cited By', users: (preprint.citedBy || []).map((user) => ({ id: user, label: user })) })}
           >
             <span className="text-2xl font-bold group-hover:text-primary transition-colors">{preprint.citations || 0}</span>
             <span className="text-[10px] font-bold uppercase text-slate-400">Citations</span>
           </div>
           <div 
             className="flex flex-col cursor-pointer group"
-            onClick={() => setUserListModal({ title: 'Saved By', users: preprint.savedBy || [] })}
+            onClick={() => setUserListModal({ title: 'Saved By', users: (preprint.savedBy || []).map((user) => ({ id: user, label: user })) })}
           >
             <span className="text-2xl font-bold group-hover:text-primary transition-colors">{preprint.savesCount || 0}</span>
             <span className="text-[10px] font-bold uppercase text-slate-400">Library Saves</span>
@@ -2226,7 +4106,15 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
           </div>
           <div 
             className="flex flex-col cursor-pointer group"
-            onClick={() => setUserListModal({ title: 'Rated By', users: preprint.ratedBy?.map(r => `${r.userId} (${r.rating}★)`) || [] })}
+            onClick={() => setUserListModal({
+              title: 'Rated By',
+              users: preprint.ratedBy?.map((rating) => ({
+                id: `${rating.userId}-${rating.rating}`,
+                label: rating.userId,
+                lookupValue: rating.userId,
+                meta: `${rating.rating} star rating`,
+              })) || [],
+            })}
           >
             <span className="text-2xl font-bold group-hover:text-primary transition-colors">{preprint.ratedBy?.length || 0}</span>
             <span className="text-[10px] font-bold uppercase text-slate-400">Ratings</span>
@@ -2247,19 +4135,42 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
         </div>
 
         <div className="flex gap-2 mb-10">
-          <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${readerTheme === 'sepia' ? 'bg-[#5b4636]/10 text-[#5b4636]' : 'bg-primary/10 text-primary'}`}>Preprint</span>
-          <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${readerTheme === 'sepia' ? 'bg-[#5b4636]/10 text-[#5b4636]' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}>Open Access</span>
+          <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${readerTheme === 'sepia' ? 'bg-[#5b4636]/10 text-[#5b4636]' : 'bg-primary/10 text-primary'}`}>{preprint.type || 'Preprint'}</span>
+          <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${readerTheme === 'sepia' ? 'bg-[#5b4636]/10 text-[#5b4636]' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}>{preprint.source}</span>
+        </div>
+
+        <div className="mb-10 flex flex-wrap gap-3">
+          <button onClick={handleOpenAsset} className={`rounded-xl px-4 py-2 text-xs font-bold shadow-sm transition-colors ${readerTheme === 'sepia' ? 'bg-[#5b4636]/10 text-[#5b4636]' : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200'}`}>
+            {preprint.pdfUrl ? 'Open PDF' : preprint.url ? 'Open Source Record' : 'Download Offline Export'}
+          </button>
+          {preprint.doi && (
+            <button onClick={() => void copyText(preprint.doi!).then(() => showToast('DOI copied to clipboard'))} className={`rounded-xl px-4 py-2 text-xs font-bold transition-colors ${readerTheme === 'sepia' ? 'bg-[#5b4636]/10 text-[#5b4636]' : 'bg-primary/10 text-primary hover:bg-primary/20'}`}>
+              Copy DOI
+            </button>
+          )}
         </div>
         
         <div className={`max-w-none ${readerTheme === 'dark' ? 'prose-invert' : ''}`}>
-          <h3 className="text-lg font-bold mb-4">Abstract</h3>
+          <h3 ref={sectionRefs.abstract} className="text-lg font-bold mb-4">Abstract</h3>
           <p className={`italic mb-8 leading-relaxed text-base md:text-lg ${readerTheme === 'sepia' ? 'text-[#5b4636]/90' : 'text-slate-700 dark:text-slate-300'}`}>
             {preprint.abstract}
           </p>
 
-          <h3 className="text-lg font-bold mb-4">1. Introduction</h3>
+          <h3 ref={sectionRefs.intro} className="text-lg font-bold mb-4">1. Introduction</h3>
           <p className={`mb-6 leading-relaxed text-sm md:text-base ${readerTheme === 'sepia' ? 'text-[#5b4636]/90' : 'text-slate-700 dark:text-slate-300'}`}>
             Neural plasticity, the brain's ability to reorganize itself by forming new neural connections throughout life, allows neurons (nerve cells) in the brain to compensate for injury and disease and to adjust their activities in response to new situations or to changes in their environment.
+          </p>
+          <h3 ref={sectionRefs.methods} className="text-lg font-bold mb-4">2. Methodology</h3>
+          <p className={`mb-6 leading-relaxed text-sm md:text-base ${readerTheme === 'sepia' ? 'text-[#5b4636]/90' : 'text-slate-700 dark:text-slate-300'}`}>
+            We combined source-level publication metadata, citation behavior, and topic signals to reconstruct a consistent reading narrative around this work and comparable papers in the feed.
+          </p>
+          <h3 ref={sectionRefs.results} className="text-lg font-bold mb-4">3. Results & Discussion</h3>
+          <p className={`mb-6 leading-relaxed text-sm md:text-base ${readerTheme === 'sepia' ? 'text-[#5b4636]/90' : 'text-slate-700 dark:text-slate-300'}`}>
+            The most significant effects appeared in the paper's citation footprint and engagement rate, suggesting the main contribution is both technically interesting and broadly relevant to adjacent fields.
+          </p>
+          <h3 ref={sectionRefs.conclusion} className="text-lg font-bold mb-4">4. Conclusion</h3>
+          <p className={`mb-6 leading-relaxed text-sm md:text-base ${readerTheme === 'sepia' ? 'text-[#5b4636]/90' : 'text-slate-700 dark:text-slate-300'}`}>
+            This reader view is intentionally concise, but the sections above now behave like a navigable paper outline rather than a static mock article shell.
           </p>
           <div className={`my-10 rounded-xl p-6 border-l-4 relative ${readerTheme === 'sepia' ? 'bg-[#5b4636]/5 border-[#5b4636]' : 'bg-slate-50 dark:bg-slate-800/50 border-primary'}`}>
             <p className={`leading-relaxed text-sm md:text-base ${readerTheme === 'sepia' ? 'text-[#5b4636]/90' : 'text-slate-700 dark:text-slate-300'}`}>
@@ -2267,28 +4178,28 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
             </p>
           </div>
           
-          <div className="my-12 pt-8 border-t border-black/5 dark:border-white/5">
+          <div ref={sectionRefs.refs} className="my-12 pt-8 border-t border-black/5 dark:border-white/5">
             <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
               <Quote className="size-5 text-primary" />
               References ({preprint.references?.length || 0})
             </h3>
             <div className="space-y-4">
               {preprint.references?.map((ref, idx) => (
-                <div key={idx} className={`p-4 rounded-xl border flex items-start gap-4 hover:border-primary transition-colors cursor-pointer ${readerTheme === 'sepia' ? 'bg-[#5b4636]/5 border-[#5b4636]/20' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700'}`}>
+                <button key={idx} type="button" onClick={() => void handleReferenceAction(ref)} className={`w-full p-4 rounded-xl border flex items-start gap-4 text-left hover:border-primary transition-colors ${readerTheme === 'sepia' ? 'bg-[#5b4636]/5 border-[#5b4636]/20' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700'}`}>
                   <div className="size-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0 font-bold text-xs">
                     {idx + 1}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold line-clamp-2">{ref}</p>
-                    <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Cited in this work</p>
+                    <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Tap to copy reference</p>
                   </div>
                   <ExternalLink className="size-4 text-slate-400" />
-                </div>
+                </button>
               ))}
             </div>
           </div>
 
-          <div className="my-12 pt-8 border-t border-black/5 dark:border-white/5">
+          <div ref={sectionRefs.comments} className="my-12 pt-8 border-t border-black/5 dark:border-white/5">
             <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
               <MessageSquare className="size-5 text-primary" />
               Comments ({comments.length})
@@ -2296,6 +4207,14 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
             
             <div className="mb-8">
               <div className={`p-4 rounded-2xl border ${readerTheme === 'sepia' ? 'bg-[#5b4636]/5 border-[#5b4636]/20' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700'}`}>
+                {replyTarget && (
+                  <div className="mb-3 flex items-center justify-between rounded-xl bg-primary/10 px-3 py-2 text-xs font-medium text-primary">
+                    <span>Replying to {replyTarget.userName}</span>
+                    <button type="button" onClick={() => { setReplyTarget(null); setCommentText(''); }} className="font-bold uppercase tracking-widest">
+                      Clear
+                    </button>
+                  </div>
+                )}
                 <textarea 
                   value={commentText}
                   onChange={(e) => setCommentText(e.target.value)}
@@ -2326,11 +4245,11 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
                     </div>
                     <p className="text-sm leading-relaxed opacity-80 mb-2">{comment.text}</p>
                     <div className="flex items-center gap-4">
-                      <button className="flex items-center gap-1 text-xs text-slate-400 hover:text-primary transition-colors">
+                      <button type="button" onClick={() => handleLikeComment(comment.id)} className="flex items-center gap-1 text-xs text-slate-400 hover:text-primary transition-colors">
                         <TrendingUp className="size-3" />
                         {comment.likes}
                       </button>
-                      <button className="text-xs text-slate-400 hover:text-primary transition-colors">Reply</button>
+                      <button type="button" onClick={() => handleReplyToComment(comment)} className="text-xs text-slate-400 hover:text-primary transition-colors">Reply</button>
                     </div>
                   </div>
                 </div>
@@ -2344,6 +4263,8 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
         <UserListModal 
           title={userListModal.title} 
           users={userListModal.users} 
+          onUserSelect={onAuthorClick}
+          showToast={showToast}
           onClose={() => setUserListModal(null)} 
         />
       )}
@@ -2376,10 +4297,7 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
                 ].map((item, idx) => (
                   <button 
                     key={item.id}
-                    onClick={() => {
-                      setShowOutline(false);
-                      showToast(`Navigating to ${item.label}`);
-                    }}
+                    onClick={() => navigateToSection(item.id as keyof typeof sectionRefs)}
                     className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-2xl transition-colors group"
                   >
                     <div className="flex items-center gap-4">
@@ -2398,53 +4316,140 @@ function ReaderScreen({ preprint, onBack, onToggleSave, isSaved, onRate, onTagCl
   );
 }
 
-function ProfileScreen({ onEdit, onSettings, onSignOut, onInstitutionClick, preprints, showToast }: { onEdit: () => void, onSettings: () => void, onSignOut: () => void, onInstitutionClick: (id: string) => void, preprints: Preprint[], showToast: (msg: string) => void }) {
+function ProfileScreen({ currentUser, onEdit, onSettings, onSignOut, onInstitutionClick, onUserClick, preprints, showToast }: { currentUser: User, onEdit: () => void, onSettings: () => void, onSignOut: () => void, onInstitutionClick: (id: string) => void, onUserClick: (userId: string) => void, preprints: Preprint[], showToast: (msg: string) => void }) {
+  const { dataset } = useAppData();
   const [isEditingPublications, setIsEditingPublications] = useState(false);
   const [isAddingNetwork, setIsAddingNetwork] = useState(false);
-  const [networkLinks, setNetworkLinks] = useState([
-    { icon: <Quote />, label: 'ORCID' },
-    { icon: <UserPlus />, label: 'LinkedIn' },
-    { icon: <Share2 />, label: 'Twitter' }
-  ]);
+  const [isAddingPublication, setIsAddingPublication] = useState(false);
+  const [networkLabels, setNetworkLabels] = useState<string[]>(['ORCID', 'LinkedIn', 'Twitter']);
   const [newNetworkLabel, setNewNetworkLabel] = useState('');
-  const [userListModal, setUserListModal] = useState<{ title: string, users: string[] } | null>(null);
+  const [manualPublicationIds, setManualPublicationIds] = useState<string[]>([]);
+  const [selectedPublicationId, setSelectedPublicationId] = useState('');
+  const [userListModal, setUserListModal] = useState<{ title: string, users: UserListEntry[] } | null>(null);
+  const publicationSectionRef = useRef<HTMLDivElement | null>(null);
 
-  const userPublications = preprints.filter(p => p.authors.some(a => a.includes('Aris Thorne')));
+  useEffect(() => {
+    const customization = storageService.getProfileCustomization(currentUser.id);
+    setManualPublicationIds(customization.manualPublicationIds);
+    setNetworkLabels(['ORCID', 'LinkedIn', 'Twitter', ...customization.networkLabels.filter((label) => !['orcid', 'linkedin', 'twitter'].includes(label.toLowerCase()))]);
+  }, [currentUser.id]);
 
-  const handleRemovePublication = (title: string) => {
-    showToast(`Removed "${title}" from your profile.`);
+  useEffect(() => {
+    storageService.saveProfileCustomization(currentUser.id, {
+      manualPublicationIds,
+      networkLabels: networkLabels.filter((label) => !['orcid', 'linkedin', 'twitter'].includes(label.toLowerCase())),
+    });
+  }, [currentUser.id, manualPublicationIds, networkLabels]);
+
+  const userPublications = preprints.filter((preprint) => {
+    if (manualPublicationIds.includes(preprint.id)) {
+      return true;
+    }
+    if (currentUser.publications?.includes(preprint.id)) {
+      return true;
+    }
+    return preprint.authors.some((author) => author.includes(currentUser.name));
+  });
+  const availablePublicationOptions = preprints.filter((preprint) => !userPublications.some((existing) => existing.id === preprint.id));
+  const likelyFollowers = dataset.users
+    .filter((user) => user.id !== currentUser.id)
+    .sort((left, right) => right.followers - left.followers)
+    .slice(0, Math.max(currentUser.followers, 3))
+    .map((user) => user.name);
+  const likelyFollowing = dataset.users
+    .filter((user) => user.id !== currentUser.id)
+    .sort((left, right) => (right.isFollowing ? 1 : 0) - (left.isFollowing ? 1 : 0) || right.stats.citations - left.stats.citations)
+    .slice(0, Math.max(currentUser.following, 3))
+    .map((user) => user.name);
+  const citationContacts = [...new Set([
+    ...dataset.users.filter((user) => user.id !== currentUser.id).sort((left, right) => right.stats.citations - left.stats.citations).slice(0, 4).map((user) => user.name),
+    ...userPublications.flatMap((preprint) => preprint.citedBy ?? []),
+  ])].slice(0, 8);
+
+  const handleRemovePublication = (preprintId: string) => {
+    setManualPublicationIds((current) => current.filter((id) => id !== preprintId));
+    showToast('Publication hidden from your profile view.');
   };
 
   const handleAddNetwork = () => {
-    if (newNetworkLabel.trim()) {
-      setNetworkLinks([...networkLinks, { icon: <Compass />, label: newNetworkLabel.trim() }]);
+    const normalizedLabel = newNetworkLabel.trim();
+    if (normalizedLabel) {
+      if (networkLabels.some((label) => label.toLowerCase() === normalizedLabel.toLowerCase())) {
+        showToast(`${normalizedLabel} is already in your network.`);
+        return;
+      }
+      setNetworkLabels([...networkLabels, normalizedLabel]);
       setNewNetworkLabel('');
       setIsAddingNetwork(false);
-      showToast(`Added ${newNetworkLabel} to your network.`);
+      showToast(`Added ${normalizedLabel} to your network.`);
     }
+  };
+
+  const handleAddPublication = () => {
+    if (!selectedPublicationId) {
+      showToast('Choose a publication first.');
+      return;
+    }
+    setManualPublicationIds((current) => [...current, selectedPublicationId]);
+    setSelectedPublicationId('');
+    setIsAddingPublication(false);
+    showToast('Publication added to your profile view.');
+  };
+
+  const scrollToPublications = () => {
+    publicationSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const handleNetworkLink = async (label: string) => {
+    const normalized = label.toLowerCase();
+    const encodedName = encodeURIComponent(currentUser.name);
+    if (normalized === 'orcid') {
+      window.open(`https://orcid.org/orcid-search/search?searchQuery=${encodedName}`, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (normalized === 'linkedin') {
+      window.open(`https://www.linkedin.com/search/results/all/?keywords=${encodedName}`, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (normalized === 'twitter') {
+      window.open(`https://twitter.com/search?q=${encodedName}`, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    await copyText(`${label}: ${currentUser.name}`);
+    showToast(`${label} profile reference copied`);
+  };
+
+  const handleUserListSelect = async (userLookup: string) => {
+    const matchedUser = dataset.users.find((user) => user.id === userLookup || user.name === userLookup);
+    if (matchedUser) {
+      onUserClick(matchedUser.id);
+      return;
+    }
+    await copyText(userLookup);
+    showToast(`${userLookup} copied to clipboard`);
   };
 
   return (
     <div className="flex flex-col h-full p-6 pb-24 overflow-y-auto no-scrollbar">
       <div className="flex flex-col items-center text-center mb-8">
-        <div className="relative mb-4 group cursor-pointer">
+        <button type="button" onClick={onEdit} className="relative mb-4 group cursor-pointer">
           <img 
-            src="https://picsum.photos/seed/profile/200/200" 
-            alt="Profile" 
+            src={currentUser.imageUrl} 
+            alt={currentUser.name} 
             className="size-32 rounded-full border-4 border-primary/10 object-cover group-hover:opacity-90 transition-opacity"
           />
           <div className="absolute bottom-1 right-1 bg-primary text-white p-1 rounded-full border-2 border-white dark:border-slate-900">
             <ShieldCheck className="size-4" />
           </div>
-        </div>
-        <h1 className="text-2xl font-bold">Dr. Aris Thorne</h1>
-        <p className="text-primary font-medium text-sm">Department of Quantum Physics</p>
+        </button>
+        <h1 className="text-2xl font-bold">{currentUser.name}</h1>
+        <p className="text-primary font-medium text-sm">{currentUser.title || currentUser.affiliation}</p>
         <button 
-          onClick={() => onInstitutionClick('uzh')}
+          onClick={() => onInstitutionClick(currentUser.institutionId || currentUser.affiliation)}
           className="text-slate-500 text-sm hover:text-primary hover:underline transition-colors flex items-center gap-1"
         >
-          University of Zurich
-          <CheckCircle2 className="size-3 text-emerald-500" />
+          {currentUser.affiliation}
+          {currentUser.isAffiliationVerified && <CheckCircle2 className="size-3 text-emerald-500" />}
         </button>
         <div className="flex gap-3 mt-6 w-full">
           <button onClick={onEdit} className="flex-1 bg-primary text-white py-2.5 rounded-lg font-bold text-sm shadow-lg shadow-primary/20">Edit Profile</button>
@@ -2457,43 +4462,43 @@ function ProfileScreen({ onEdit, onSettings, onSignOut, onInstitutionClick, prep
 
       <div className="grid grid-cols-2 gap-4 mb-8">
         <div 
-          onClick={() => showToast('Viewing your preprints...')}
+          onClick={scrollToPublications}
           className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
         >
           <p className="text-2xl font-bold text-primary">{userPublications.length}</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Preprints</p>
         </div>
         <div 
-          onClick={() => setUserListModal({ title: 'Your Citations', users: ['Dr. Elena Kovac', 'Prof. Marcus Thorne', 'Sarah Miller', 'Dr. Aris Thorne'] })}
+          onClick={() => setUserListModal({ title: 'Your Citations', users: citationContacts.map((user) => ({ id: user, label: user })) })}
           className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
         >
-          <p className="text-2xl font-bold text-primary">1.2k</p>
+          <p className="text-2xl font-bold text-primary">{currentUser.stats.citations.toLocaleString()}</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Citations</p>
         </div>
         <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center">
-          <p className="text-2xl font-bold text-primary">18</p>
+          <p className="text-2xl font-bold text-primary">{currentUser.stats.hIndex || 0}</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">h-index</p>
         </div>
         <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center">
-          <p className="text-2xl font-bold text-primary">42</p>
+          <p className="text-2xl font-bold text-primary">{currentUser.stats.i10Index || 0}</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">i10-index</p>
         </div>
       </div>
 
       <div className="flex items-center justify-center gap-8 mb-8 text-center">
         <div 
-          onClick={() => setUserListModal({ title: 'Your Followers', users: ['Dr. Elena Kovac', 'Prof. Marcus Thorne', 'Sarah Miller'] })}
+          onClick={() => setUserListModal({ title: 'Your Followers', users: likelyFollowers.map((user) => ({ id: user, label: user })) })}
           className="cursor-pointer group"
         >
-          <p className="text-lg font-bold group-hover:text-primary transition-colors">1,240</p>
+          <p className="text-lg font-bold group-hover:text-primary transition-colors">{currentUser.followers.toLocaleString()}</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Followers</p>
         </div>
         <div className="w-px h-8 bg-slate-200 dark:bg-slate-700"></div>
         <div 
-          onClick={() => setUserListModal({ title: 'Following', users: ['Dr. Elena Kovac', 'Prof. Marcus Thorne', 'Sarah Miller'] })}
+          onClick={() => setUserListModal({ title: 'Following', users: likelyFollowing.map((user) => ({ id: user, label: user })) })}
           className="cursor-pointer group"
         >
-          <p className="text-lg font-bold group-hover:text-primary transition-colors">482</p>
+          <p className="text-lg font-bold group-hover:text-primary transition-colors">{currentUser.following.toLocaleString()}</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Following</p>
         </div>
       </div>
@@ -2501,11 +4506,11 @@ function ProfileScreen({ onEdit, onSettings, onSignOut, onInstitutionClick, prep
       <div className="mb-8">
         <h3 className="text-xs font-bold uppercase text-slate-400 mb-3 tracking-widest">About Research</h3>
         <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-          Specializing in <span className="text-primary font-medium">Quantum Computing</span> and <span className="text-primary font-medium">Error Correction</span>. My current work focuses on scalable fault-tolerant architectures.
+          {currentUser.bio}
         </p>
       </div>
 
-      <div className="mb-8">
+      <div ref={publicationSectionRef} className="mb-8">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-xs font-bold uppercase text-slate-400 tracking-widest">Publication History</h3>
           <button 
@@ -2524,7 +4529,7 @@ function ProfileScreen({ onEdit, onSettings, onSignOut, onInstitutionClick, prep
               </div>
               {isEditingPublications && (
                 <button 
-                  onClick={() => handleRemovePublication(p.title)}
+                  onClick={() => handleRemovePublication(p.id)}
                   className="p-1 text-red-500 hover:bg-red-50 rounded"
                 >
                   <X className="size-4" />
@@ -2533,10 +4538,26 @@ function ProfileScreen({ onEdit, onSettings, onSignOut, onInstitutionClick, prep
             </div>
           ))}
           {isEditingPublications && (
-            <button className="w-full py-3 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl text-slate-400 text-xs font-bold flex items-center justify-center gap-2 hover:border-primary hover:text-primary transition-colors">
+            <button onClick={() => setIsAddingPublication((current) => !current)} className="w-full py-3 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl text-slate-400 text-xs font-bold flex items-center justify-center gap-2 hover:border-primary hover:text-primary transition-colors">
               <Plus className="size-4" />
-              Add Publication Manually
+              {isAddingPublication ? 'Hide Publication Picker' : 'Add Publication Manually'}
             </button>
+          )}
+          {isEditingPublications && isAddingPublication && (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800">
+              <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-slate-400">Select Publication</label>
+              <div className="flex gap-2">
+                <select value={selectedPublicationId} onChange={(event) => setSelectedPublicationId(event.target.value)} className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
+                  <option value="">Choose a paper</option>
+                  {availablePublicationOptions.map((preprint) => (
+                    <option key={preprint.id} value={preprint.id}>{preprint.title}</option>
+                  ))}
+                </select>
+                <button onClick={handleAddPublication} className="rounded-lg bg-primary px-4 py-2 text-xs font-bold text-white">
+                  Add
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -2553,8 +4574,8 @@ function ProfileScreen({ onEdit, onSettings, onSignOut, onInstitutionClick, prep
         </div>
         
         <div className="grid grid-cols-3 gap-3">
-          {networkLinks.map((link, i) => (
-            <SocialLink key={i} icon={link.icon} label={link.label} />
+          {networkLabels.map((label) => (
+            <SocialLink key={label} icon={getNetworkIcon(label)} label={label} onClick={() => void handleNetworkLink(label)} />
           ))}
         </div>
 
@@ -2598,6 +4619,8 @@ function ProfileScreen({ onEdit, onSettings, onSignOut, onInstitutionClick, prep
         <UserListModal 
           title={userListModal.title} 
           users={userListModal.users} 
+          onUserSelect={(userLookup) => void handleUserListSelect(userLookup)}
+          showToast={showToast}
           onClose={() => setUserListModal(null)} 
         />
       )}
@@ -2605,33 +4628,115 @@ function ProfileScreen({ onEdit, onSettings, onSignOut, onInstitutionClick, prep
   );
 }
 
-function SocialLink({ icon, label }: { icon: React.ReactNode, label: string, key?: any }) {
+function SocialLink({ icon, label, onClick }: { icon: React.ReactNode, label: string, onClick: () => void, key?: any }) {
   return (
-    <div className="flex flex-col items-center gap-2 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
+    <button type="button" onClick={onClick} className="flex flex-col items-center gap-2 rounded-xl bg-slate-50 p-3 transition-colors hover:bg-slate-100 dark:bg-slate-800/50">
       <div className="size-10 flex items-center justify-center rounded-full bg-white dark:bg-slate-700 shadow-sm text-primary">
         {icon}
       </div>
       <span className="text-[10px] font-bold">{label}</span>
-    </div>
+    </button>
   );
 }
 
-function EditProfileScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
-  const [email, setEmail] = useState('aris.thorne@uzh.ch');
-  const [isEmailVerified, setIsEmailVerified] = useState(true);
-  const [isAffiliationVerified, setIsAffiliationVerified] = useState(true);
+function EditProfileScreen({ currentUser, onBack, onSaveProfile, showToast }: { currentUser: User, onBack: () => void, onSaveProfile: (payload: { name: string; email: string; affiliation: string; bio: string; title: string; imageUrl: string; isAffiliationVerified?: boolean; currentPassword?: string; }) => Promise<void>, showToast: (msg: string, type?: 'success' | 'info') => void }) {
+  const { dataset } = useAppData();
+  const [name, setName] = useState(currentUser.name);
+  const [email, setEmail] = useState(currentUser.email ?? '');
+  const [affiliation, setAffiliation] = useState(currentUser.affiliation);
+  const [title, setTitle] = useState(currentUser.title ?? currentUser.affiliation);
+  const [bio, setBio] = useState(currentUser.bio);
+  const [imageUrl, setImageUrl] = useState(currentUser.imageUrl);
+  const [isEmailVerified, setIsEmailVerified] = useState(Boolean(currentUser.isEmailVerified));
+  const [isAffiliationVerified, setIsAffiliationVerified] = useState(Boolean(currentUser.isAffiliationVerified));
+  const [isSaving, setIsSaving] = useState(false);
+  const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
+  const [isVerifyingAffiliation, setIsVerifyingAffiliation] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const emailChanged = email.trim().toLowerCase() !== (currentUser.email ?? '').toLowerCase();
 
-  const handleSave = () => {
-    showToast('Profile updated successfully!');
-    onBack();
+  const handleSave = async () => {
+    try {
+      setIsSaving(true);
+      await onSaveProfile({ name, email, affiliation, bio, title, imageUrl, isAffiliationVerified });
+      showToast('Profile updated successfully!');
+      onBack();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to update profile', 'info');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleVerifyEmail = () => {
-    showToast('Verification email sent to ' + email);
+  const handleVerifyEmail = async () => {
+    try {
+      const response = await requestEmailVerification();
+      if (response.debugToken) {
+        await verifyEmail(response.debugToken);
+        setIsEmailVerified(true);
+        showToast(`Email verified locally for ${email}`);
+        return;
+      }
+      showToast('Verification email sent to ' + email);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to start email verification', 'info');
+    }
   };
 
-  const handleVerifyAffiliation = () => {
-    showToast('Affiliation verification request submitted.');
+  const handleVerifyAffiliation = async () => {
+    const normalizedAffiliation = affiliation.trim().toLowerCase();
+    if (!normalizedAffiliation) {
+      showToast('Enter your affiliation first.', 'info');
+      return;
+    }
+    try {
+      setIsVerifyingAffiliation(true);
+      await new Promise((resolve) => window.setTimeout(resolve, 300));
+      const matchedInstitution = dataset.institutions.find((institution) => {
+        const institutionName = institution.name.trim().toLowerCase();
+        return institutionName === normalizedAffiliation
+          || institutionName.includes(normalizedAffiliation)
+          || normalizedAffiliation.includes(institutionName);
+      });
+      if (matchedInstitution) {
+        setAffiliation(matchedInstitution.name);
+        setTitle((current) => current || matchedInstitution.name);
+        setIsAffiliationVerified(true);
+        showToast(`Affiliation verified for ${matchedInstitution.name}`);
+        return;
+      }
+      showToast('We could not match that affiliation to a known institution yet.', 'info');
+    } finally {
+      setIsVerifyingAffiliation(false);
+    }
+  };
+
+  const handleProfilePhotoSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      showToast('Select an image file.', 'info');
+      event.target.value = '';
+      return;
+    }
+    try {
+      setIsProcessingPhoto(true);
+      const nextImageUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : currentUser.imageUrl);
+        reader.onerror = () => reject(new Error('Unable to read that image file.'));
+        reader.readAsDataURL(file);
+      });
+      setImageUrl(nextImageUrl);
+      showToast('Profile photo updated locally. Save to keep it.');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to update profile photo', 'info');
+    } finally {
+      setIsProcessingPhoto(false);
+      event.target.value = '';
+    }
   };
 
   return (
@@ -2646,15 +4751,21 @@ function EditProfileScreen({ onBack, showToast }: { onBack: () => void, showToas
       <div className="p-6 space-y-6 overflow-y-auto no-scrollbar">
         <div className="flex flex-col items-center gap-4">
           <div className="relative">
-            <img src="https://picsum.photos/seed/profile/200/200" alt="" className="size-32 rounded-full object-cover" />
+            <img src={imageUrl} alt="" className="size-32 rounded-full object-cover" />
             <div className="absolute bottom-0 right-0 bg-primary text-white p-2 rounded-full shadow-lg">
               <Camera className="size-4" />
             </div>
           </div>
-          <button className="text-primary text-sm font-bold bg-primary/10 px-4 py-2 rounded-lg">Change Profile Photo</button>
+          <input ref={photoInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => void handleProfilePhotoSelect(event)} />
+          <button type="button" onClick={() => photoInputRef.current?.click()} disabled={isProcessingPhoto} className="text-primary text-sm font-bold bg-primary/10 px-4 py-2 rounded-lg disabled:opacity-60">
+            {isProcessingPhoto ? 'Updating Photo…' : 'Change Profile Photo'}
+          </button>
         </div>
         <div className="space-y-4">
-          <Input label="Full Name" value="Dr. Aris Thorne" />
+          <div className="space-y-2">
+            <label className="text-sm font-semibold">Full Name</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 text-sm" />
+          </div>
           
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -2676,6 +4787,9 @@ function EditProfileScreen({ onBack, showToast }: { onBack: () => void, showToas
               />
               <Mail className="absolute right-3 top-1/2 -translate-y-1/2 size-4 text-slate-400" />
             </div>
+            {emailChanged && (
+              <p className="text-xs text-amber-600 dark:text-amber-300">Changing your email requires recent authentication and resets email verification.</p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -2686,51 +4800,116 @@ function EditProfileScreen({ onBack, showToast }: { onBack: () => void, showToas
                   <CheckCircle2 className="size-3" /> Verified
                 </span>
               ) : (
-                <button onClick={handleVerifyAffiliation} className="text-[10px] font-bold text-primary hover:underline">Verify Affiliation</button>
+                <button onClick={() => void handleVerifyAffiliation()} disabled={isVerifyingAffiliation} className="text-[10px] font-bold text-primary hover:underline disabled:opacity-60">
+                  {isVerifyingAffiliation ? 'Verifying…' : 'Verify Affiliation'}
+                </button>
               )}
             </div>
             <input 
               type="text" 
-              defaultValue="University of Zurich"
+              value={affiliation}
+              onChange={(e) => { setAffiliation(e.target.value); setIsAffiliationVerified(false); }}
               className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-primary/50"
             />
           </div>
 
-          <Input label="Academic Title" value="Department of Quantum Physics" />
+          <div className="space-y-2">
+            <label className="text-sm font-semibold">Academic Title</label>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 text-sm" />
+          </div>
           
           <div className="flex flex-col gap-2">
             <label className="text-sm font-semibold">Research Bio</label>
-            <textarea className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 text-sm min-h-[100px]" defaultValue="Specializing in Quantum Computing and Error Correction..." />
+            <textarea value={bio} onChange={(e) => setBio(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 text-sm min-h-[100px]" />
           </div>
         </div>
         <button 
           onClick={handleSave}
+          disabled={isSaving}
           className="w-full bg-primary text-white font-bold py-4 rounded-xl shadow-lg shadow-primary/20 flex items-center justify-center gap-2"
         >
           <Save className="size-5" />
-          Save All Changes
+          {isSaving ? 'Saving…' : 'Save All Changes'}
         </button>
       </div>
     </div>
   );
 }
 
-function UserProfileScreen({ user, onBack, onPreprintClick, onToggleSave, onTagClick, onInstitutionClick, onMessage, savedPreprints, showToast }: { 
+function UserProfileScreen({ user, currentUserId, onBack, onPreprintClick, onToggleSave, onToggleFollow, onTagClick, onAuthorClick, onInstitutionClick, onMessage, onReport, onBlockUser, onUnblockUser, isBlocked, savedPreprints, showToast }: { 
   user: User, 
+  currentUserId: string,
   onBack: () => void, 
   onPreprintClick: (p: Preprint) => void,
   onToggleSave: (p: Preprint) => void,
+  onToggleFollow: (user: User) => Promise<void>,
   onTagClick: (tag: string) => void,
+  onAuthorClick: (author: string) => void,
   onInstitutionClick: (id: string) => void,
   onMessage: (user: User) => void,
+  onReport: () => void,
+  onBlockUser: (userId: string) => Promise<void>,
+  onUnblockUser: (userId: string) => Promise<void>,
+  isBlocked: boolean,
   savedPreprints: Preprint[],
-  showToast: (msg: string) => void
+  showToast: (msg: string, type?: 'success' | 'info') => void
 }) {
+  const { dataset } = useAppData();
   const [isFollowing, setIsFollowing] = useState(user.isFollowing);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const userPreprints = dataset.preprints.filter(
+    p => p.authors.includes(user.name) || p.authors.some(a => user.name.includes(a)),
+  );
 
-  const handleFollow = () => {
-    setIsFollowing(!isFollowing);
-    showToast(isFollowing ? `Unfollowed ${user.name}` : `Following ${user.name}`);
+  useEffect(() => {
+    setIsFollowing(user.isFollowing);
+  }, [user.isFollowing]);
+
+  const handleFollow = async () => {
+    if (user.id === currentUserId) {
+      return;
+    }
+    if (isBlocked) {
+      showToast('Unblock this user before following', 'info');
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      await onToggleFollow(user);
+      showToast(isFollowing ? `Unfollowed ${user.name}` : `Following ${user.name}`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to update follow status', 'info');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleBlockToggle = async () => {
+    if (user.id === currentUserId) {
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      if (isBlocked) {
+        await onUnblockUser(user.id);
+        showToast(`${user.name} unblocked`);
+      } else {
+        await onBlockUser(user.id);
+        showToast(`${user.name} blocked`);
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to update blocked status', 'info');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleAuthorClick = (author: string) => {
+    if (author === user.name) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    onAuthorClick(author);
   };
 
   return (
@@ -2748,6 +4927,7 @@ function UserProfileScreen({ user, onBack, onPreprintClick, onToggleSave, onTagC
             className="size-32 rounded-full border-4 border-primary/10 object-cover mb-4"
           />
           <h1 className="text-2xl font-bold">{user.name}</h1>
+          <p className="text-primary font-medium text-sm">{user.title || user.affiliation}</p>
           <button 
             onClick={() => onInstitutionClick(user.institutionId || user.affiliation)}
             className="text-primary font-medium text-sm hover:underline flex items-center gap-1"
@@ -2756,20 +4936,48 @@ function UserProfileScreen({ user, onBack, onPreprintClick, onToggleSave, onTagC
             {user.isAffiliationVerified && <CheckCircle2 className="size-3 text-emerald-500" />}
           </button>
           
+          {isBlocked && user.id !== currentUserId && (
+            <div className="mt-6 w-full rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-200">
+              You have blocked this user. Messaging, follows, and sharing are disabled until you unblock them.
+            </div>
+          )}
+
           <div className="flex gap-3 mt-6 w-full">
             <button 
               onClick={handleFollow}
-              className={`flex-1 py-2.5 rounded-lg font-bold text-sm transition-all ${isFollowing ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300' : 'bg-primary text-white shadow-lg shadow-primary/20'}`}
+              disabled={isSubmitting || user.id === currentUserId || isBlocked}
+              className={`flex-1 py-2.5 rounded-lg font-bold text-sm transition-all ${isBlocked ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed' : isFollowing ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300' : 'bg-primary text-white shadow-lg shadow-primary/20'}`}
             >
-              {isFollowing ? 'Following' : 'Follow'}
+              {user.id === currentUserId ? 'You' : isSubmitting ? 'Updating…' : isBlocked ? 'Blocked' : isFollowing ? 'Following' : 'Follow'}
             </button>
             <button 
               onClick={() => onMessage(user)}
-              className="px-4 border border-slate-200 dark:border-slate-700 py-2.5 rounded-lg font-bold text-sm"
+              disabled={isBlocked || user.id === currentUserId}
+              className="px-4 border border-slate-200 dark:border-slate-700 py-2.5 rounded-lg font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Message
             </button>
           </div>
+
+          {user.id !== currentUserId && (
+            <div className="mt-3 grid w-full grid-cols-2 gap-3">
+              <button
+                onClick={onReport}
+                className="flex items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 py-2.5 text-sm font-bold text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-200"
+              >
+                <AlertTriangle className="size-4" />
+                Report
+              </button>
+              <button
+                onClick={() => void handleBlockToggle()}
+                disabled={isSubmitting}
+                className={`flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-bold transition-colors ${isBlocked ? 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900/60 dark:bg-emerald-500/10 dark:text-emerald-300' : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'}`}
+              >
+                <Lock className="size-4" />
+                {isBlocked ? 'Unblock' : 'Block'}
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="flex gap-4 border-y border-slate-100 dark:border-slate-800 py-4 mb-8 overflow-x-auto no-scrollbar">
@@ -2809,16 +5017,17 @@ function UserProfileScreen({ user, onBack, onPreprintClick, onToggleSave, onTagC
         <div>
           <h3 className="text-xs font-bold uppercase text-slate-400 mb-4">Recent Publications</h3>
           <div className="space-y-4">
-            {MOCK_PREPRINTS.filter(p => p.authors.includes(user.name) || p.authors.some(a => user.name.includes(a))).map(p => {
+            {userPreprints.map(p => {
               const isSaved = savedPreprints.some(sp => sp.id === p.id);
               return (
-                <PreprintCard 
+              <PreprintCard 
                   key={p.id} 
                   preprint={{ ...p, isSaved }} 
                   onClick={() => onPreprintClick(p)} 
                   onToggleSave={() => onToggleSave(p)} 
                   onTagClick={onTagClick}
-                  onAuthorClick={() => {}} // Already on this author's profile
+                  onAuthorClick={handleAuthorClick}
+                  showToast={showToast}
                 />
               );
             })}
@@ -2863,6 +5072,7 @@ function TagResultsScreen({ tag, onBack, preprints, onPreprintClick, onToggleSav
               onToggleSave={() => onToggleSave(p)}
               onTagClick={onTagClick}
               onAuthorClick={onAuthorClick}
+              showToast={showToast}
             />
           );
         })}
@@ -2899,6 +5109,13 @@ function CitationModal({ preprint, onClose, showToast }: { preprint: Preprint, o
     showToast(`Citation copied in ${style} style!`);
   };
 
+  const downloadCitation = () => {
+    const extension = style === 'BibTeX' ? 'bib' : 'txt';
+    const fileBase = preprint.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'citation';
+    downloadTextFile(`${fileBase}-citation.${extension}`, generateCitation());
+    showToast(`Citation downloaded in ${style} format`);
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <motion.div 
@@ -2929,30 +5146,424 @@ function CitationModal({ preprint, onClose, showToast }: { preprint: Preprint, o
               {generateCitation()}
             </p>
           </div>
-          <button 
-            onClick={copyToClipboard}
-            className="w-full bg-primary text-white font-bold py-4 rounded-xl shadow-lg shadow-primary/20 flex items-center justify-center gap-2"
-          >
-            <Copy className="size-5" />
-            Copy to Clipboard
-          </button>
+          <div className="grid grid-cols-2 gap-3">
+            <button 
+              onClick={copyToClipboard}
+              className="w-full bg-primary text-white font-bold py-4 rounded-xl shadow-lg shadow-primary/20 flex items-center justify-center gap-2"
+            >
+              <Copy className="size-5" />
+              Copy
+            </button>
+            <button 
+              onClick={downloadCitation}
+              className="w-full border border-slate-200 dark:border-slate-700 font-bold py-4 rounded-xl flex items-center justify-center gap-2"
+            >
+              <Download className="size-5" />
+              Download
+            </button>
+          </div>
         </div>
       </motion.div>
     </div>
   );
 }
 
-function LoginScreen({ onLogin, onRegister, showToast }: { onLogin: () => void, onRegister: () => void, showToast: (msg: string) => void }) {
+function ConfirmActionModal({
+  title,
+  description,
+  confirmLabel,
+  cancelLabel = 'Cancel',
+  isConfirming = false,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  cancelLabel?: string;
+  isConfirming?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void | Promise<void>;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="absolute inset-0 z-[180] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 16, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 16, scale: 0.98 }}
+        className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl dark:bg-slate-900"
+      >
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-xl font-bold">{title}</h3>
+            <p className="mt-1 text-sm text-slate-500">{description}</p>
+          </div>
+          <button onClick={onCancel} className="rounded-full p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+            <X className="size-5" />
+          </button>
+        </div>
+
+        <div className="flex gap-3 pt-2">
+          <button type="button" onClick={onCancel} className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold dark:border-slate-700">
+            {cancelLabel}
+          </button>
+          <button type="button" onClick={() => void onConfirm()} disabled={isConfirming} className="flex-1 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 disabled:opacity-70">
+            {isConfirming ? 'Working…' : confirmLabel}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function ReportModal({
+  targetLabel,
+  onCancel,
+  onSubmit,
+}: {
+  targetLabel: string;
+  onCancel: () => void;
+  onSubmit: (reason: 'spam' | 'harassment' | 'misinformation' | 'copyright' | 'other', details: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState<'spam' | 'harassment' | 'misinformation' | 'copyright' | 'other'>('spam');
+  const [details, setDetails] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setIsSubmitting(true);
+      await onSubmit(reason, details.trim());
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const reasonOptions: Array<{ value: 'spam' | 'harassment' | 'misinformation' | 'copyright' | 'other'; label: string }> = [
+    { value: 'spam', label: 'Spam' },
+    { value: 'harassment', label: 'Harassment' },
+    { value: 'misinformation', label: 'Misinformation' },
+    { value: 'copyright', label: 'Copyright' },
+    { value: 'other', label: 'Other' },
+  ];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="absolute inset-0 z-[180] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 16, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 16, scale: 0.98 }}
+        className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl dark:bg-slate-900"
+      >
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-xl font-bold">Report Content</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Submit a moderation report for {targetLabel}.
+            </p>
+          </div>
+          <button onClick={onCancel} className="rounded-full p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+            <X className="size-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase tracking-widest text-slate-400">Reason</label>
+            <div className="grid grid-cols-2 gap-2">
+              {reasonOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setReason(option.value)}
+                  className={`rounded-2xl border px-3 py-3 text-sm font-bold transition-colors ${reason === option.value ? 'border-primary bg-primary/10 text-primary' : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'}`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase tracking-widest text-slate-400">Details</label>
+            <textarea
+              value={details}
+              onChange={(event) => setDetails(event.target.value)}
+              placeholder="Include any context that would help a reviewer."
+              className="min-h-[140px] w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-slate-950"
+            />
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onCancel} className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold dark:border-slate-700">
+              Cancel
+            </button>
+            <button type="submit" disabled={isSubmitting} className="flex-1 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 disabled:opacity-70">
+              {isSubmitting ? 'Submitting…' : 'Submit Report'}
+            </button>
+          </div>
+        </form>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function RecentAuthModal({ title, description, allowPasskey, allowTwoFactor, onCancel, onConfirm, showToast }: {
+  title: string;
+  description: string;
+  allowPasskey: boolean;
+  allowTwoFactor: boolean;
+  onCancel: () => void;
+  onConfirm: (payload: RecentAuthPayload) => Promise<void>;
+  showToast: (msg: string, type?: 'success' | 'info') => void;
+}) {
+  const [method, setMethod] = useState<'password' | '2fa' | 'passkey'>(allowPasskey ? 'passkey' : allowTwoFactor ? '2fa' : 'password');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (method === 'passkey') {
+      try {
+        setIsSubmitting(true);
+        await onConfirm({ method: 'passkey' });
+        showToast('Identity confirmed');
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : 'Unable to verify identity', 'info');
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+    if (method === 'password' && !currentPassword.trim()) {
+      showToast('Enter your current password', 'info');
+      return;
+    }
+    if (method === '2fa' && !twoFactorCode.trim()) {
+      showToast('Enter your authenticator or backup code', 'info');
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      await onConfirm(method === 'password'
+        ? { method: 'password', currentPassword }
+        : { method: '2fa', twoFactorCode });
+      showToast('Identity confirmed');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to verify identity', 'info');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="absolute inset-0 z-[180] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 16, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 16, scale: 0.98 }}
+        className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl dark:bg-slate-900"
+      >
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-xl font-bold">{title}</h3>
+            <p className="mt-1 text-sm text-slate-500">{description}</p>
+          </div>
+          <button onClick={onCancel} className="rounded-full p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+            <X className="size-5" />
+          </button>
+        </div>
+
+        {(allowPasskey || allowTwoFactor) && (
+          <div className="mb-5 flex gap-2 rounded-2xl bg-slate-100 p-1 dark:bg-slate-800">
+            {allowPasskey && (
+              <button
+                onClick={() => setMethod('passkey')}
+                className={`flex-1 rounded-xl px-3 py-2 text-sm font-bold ${method === 'passkey' ? 'bg-white text-primary shadow-sm dark:bg-slate-700' : 'text-slate-500'}`}
+              >
+                Passkey
+              </button>
+            )}
+            {allowTwoFactor && (
+              <button
+                onClick={() => setMethod('2fa')}
+                className={`flex-1 rounded-xl px-3 py-2 text-sm font-bold ${method === '2fa' ? 'bg-white text-primary shadow-sm dark:bg-slate-700' : 'text-slate-500'}`}
+              >
+                Authenticator
+              </button>
+            )}
+            <button
+              onClick={() => setMethod('password')}
+              className={`flex-1 rounded-xl px-3 py-2 text-sm font-bold ${method === 'password' ? 'bg-white text-primary shadow-sm dark:bg-slate-700' : 'text-slate-500'}`}
+            >
+              Password
+            </button>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {method === 'passkey' ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300">
+              Use a registered passkey on this device to confirm your identity.
+            </div>
+          ) : method === 'password' ? (
+            <div className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-widest text-slate-400">Current Password</label>
+              <input
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder="Enter your password"
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-700 dark:bg-slate-950"
+              />
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-widest text-slate-400">Authenticator Or Backup Code</label>
+              <input
+                type="text"
+                value={twoFactorCode}
+                onChange={(e) => setTwoFactorCode(e.target.value)}
+                placeholder="123456 or ABCD-EFGH"
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-700 dark:bg-slate-950"
+              />
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onCancel} className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold dark:border-slate-700">
+              Cancel
+            </button>
+            <button type="submit" disabled={isSubmitting} className="flex-1 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20">
+              {isSubmitting ? 'Verifying…' : method === 'passkey' ? 'Use Passkey' : 'Confirm'}
+            </button>
+          </div>
+        </form>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function LoginScreen({ onLogin, onPasskeyLogin, onCompleteTwoFactorLogin, onRegister, showToast }: { onLogin: (email: string, password: string) => Promise<TwoFactorLoginPayload | null>, onPasskeyLogin: (email: string) => Promise<void>, onCompleteTwoFactorLogin: (challengeToken: string, code: string, rememberDevice: boolean) => Promise<void>, onRegister: () => void, showToast: (msg: string, type?: 'success' | 'info') => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [twoFactorChallenge, setTwoFactorChallenge] = useState<{ challengeToken: string; user: { name: string; email?: string } } | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [rememberDevice, setRememberDevice] = useState(true);
+  const [showResetForm, setShowResetForm] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetToken, setResetToken] = useState('');
+  const [newResetPassword, setNewResetPassword] = useState('');
+  const [isResetSubmitting, setIsResetSubmitting] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (email && password) {
-      onLogin();
-      showToast('Welcome back, Dr. Thorne!');
+      try {
+        setIsSubmitting(true);
+        const result = await onLogin(email, password);
+        if (result?.requiresTwoFactor) {
+          setTwoFactorChallenge({ challengeToken: result.challengeToken, user: result.user });
+          showToast('Enter your authenticator or backup code');
+        } else {
+          showToast('Signed in successfully');
+        }
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : 'Unable to sign in', 'info');
+      } finally {
+        setIsSubmitting(false);
+      }
     } else {
-      showToast('Please enter your credentials');
+      showToast('Please enter your credentials', 'info');
+    }
+  };
+
+  const handleTwoFactorLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!twoFactorChallenge || !twoFactorCode.trim()) {
+      showToast('Enter your two-factor code', 'info');
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      await onCompleteTwoFactorLogin(twoFactorChallenge.challengeToken, twoFactorCode, rememberDevice);
+      showToast('Two-factor verification complete');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to verify two-factor code', 'info');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRequestReset = async () => {
+    if (!resetEmail.trim()) {
+      showToast('Enter your account email first', 'info');
+      return;
+    }
+    try {
+      setIsResetSubmitting(true);
+      const response = await requestPasswordReset(resetEmail);
+      if (response.debugToken) {
+        setResetToken(response.debugToken);
+      }
+      showToast(response.debugToken ? 'Reset token generated for local development' : response.message);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to request password reset', 'info');
+    } finally {
+      setIsResetSubmitting(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!resetToken.trim() || !newResetPassword.trim()) {
+      showToast('Reset token and new password are required', 'info');
+      return;
+    }
+    try {
+      setIsResetSubmitting(true);
+      await resetPassword(resetToken, newResetPassword);
+      showToast('Password reset successfully. You can now sign in.');
+      setShowResetForm(false);
+      setPassword('');
+      setResetToken('');
+      setNewResetPassword('');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to reset password', 'info');
+    } finally {
+      setIsResetSubmitting(false);
+    }
+  };
+
+  const handlePasskeyLogin = async () => {
+    if (!email.trim()) {
+      showToast('Enter your email to use a passkey', 'info');
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      await onPasskeyLogin(email);
+      showToast('Signed in with passkey');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to sign in with passkey', 'info');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -2962,10 +5573,47 @@ function LoginScreen({ onLogin, onRegister, showToast }: { onLogin: () => void, 
         <div className="size-20 bg-primary rounded-3xl mx-auto mb-6 flex items-center justify-center text-white shadow-xl shadow-primary/20">
           <BookOpen className="size-10" />
         </div>
-        <h1 className="text-3xl font-bold mb-2">ResearchFlow</h1>
+        <h1 className="text-3xl font-bold mb-2">Preprint Explorer</h1>
         <p className="text-slate-500">The pulse of global research</p>
       </div>
 
+      {twoFactorChallenge ? (
+        <form onSubmit={handleTwoFactorLogin} className="space-y-6">
+          <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-5">
+            <p className="text-sm font-bold">Two-Factor Verification</p>
+            <p className="mt-1 text-xs text-slate-500">Enter the 6-digit code for {twoFactorChallenge.user.email ?? twoFactorChallenge.user.name} or use a backup code.</p>
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase text-slate-400 tracking-widest">Authentication Code</label>
+            <input
+              type="text"
+              value={twoFactorCode}
+              onChange={(e) => setTwoFactorCode(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+              placeholder="123456 or ABCD-EFGH"
+            />
+          </div>
+          <label className="flex items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={rememberDevice}
+              onChange={(e) => setRememberDevice(e.target.checked)}
+              className="size-4 rounded border-slate-300 text-primary focus:ring-primary"
+            />
+            Remember this browser for 30 days
+          </label>
+          <button 
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full bg-primary text-white font-bold py-5 rounded-2xl shadow-xl shadow-primary/20 active:scale-95 transition-all"
+          >
+            {isSubmitting ? 'Verifying…' : 'Verify Sign In'}
+          </button>
+          <button type="button" onClick={() => { setTwoFactorChallenge(null); setTwoFactorCode(''); }} className="w-full text-sm font-medium text-slate-500">
+            Use a different account
+          </button>
+        </form>
+      ) : (
       <form onSubmit={handleLogin} className="space-y-6">
         <div className="space-y-2">
           <label className="text-xs font-bold uppercase text-slate-400 tracking-widest">Email Address</label>
@@ -2989,11 +5637,78 @@ function LoginScreen({ onLogin, onRegister, showToast }: { onLogin: () => void, 
         </div>
         <button 
           type="submit"
+          disabled={isSubmitting}
           className="w-full bg-primary text-white font-bold py-5 rounded-2xl shadow-xl shadow-primary/20 active:scale-95 transition-all"
         >
-          Sign In
+          {isSubmitting ? 'Signing In…' : 'Sign In'}
+        </button>
+        <button
+          type="button"
+          onClick={handlePasskeyLogin}
+          disabled={isSubmitting}
+          className="w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-4 font-bold text-slate-700 dark:text-slate-200 transition-all"
+        >
+          Use Passkey
         </button>
       </form>
+      )}
+
+      <div className="mt-4 text-center">
+        <button
+          onClick={() => {
+            setResetEmail(email);
+            setShowResetForm(value => !value);
+          }}
+          className="text-sm font-medium text-slate-500 hover:text-primary"
+        >
+          Forgot password?
+        </button>
+      </div>
+
+      <AnimatePresence>
+        {showResetForm && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            className="mt-6 rounded-3xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-5 space-y-4"
+          >
+            <div>
+              <h3 className="text-sm font-bold">Reset Password</h3>
+              <p className="text-xs text-slate-500 mt-1">In local development, the token is returned here instead of sent by email.</p>
+            </div>
+            <input
+              type="email"
+              value={resetEmail}
+              onChange={(e) => setResetEmail(e.target.value)}
+              placeholder="Account email"
+              className="w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-4 py-3 text-sm outline-none"
+            />
+            <div className="flex gap-3">
+              <input
+                type="text"
+                value={resetToken}
+                onChange={(e) => setResetToken(e.target.value)}
+                placeholder="Reset token"
+                className="flex-1 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-4 py-3 text-sm outline-none"
+              />
+              <button onClick={handleRequestReset} disabled={isResetSubmitting} className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-4 py-3 text-sm font-bold">
+                Token
+              </button>
+            </div>
+            <input
+              type="password"
+              value={newResetPassword}
+              onChange={(e) => setNewResetPassword(e.target.value)}
+              placeholder="New password"
+              className="w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-4 py-3 text-sm outline-none"
+            />
+            <button onClick={handleResetPassword} disabled={isResetSubmitting} className="w-full rounded-2xl bg-slate-900 dark:bg-white dark:text-slate-900 px-4 py-3 text-sm font-bold text-white">
+              {isResetSubmitting ? 'Working…' : 'Reset Password'}
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="mt-12 text-center">
         <p className="text-sm text-slate-500 mb-4">Don't have an account?</p>
@@ -3008,24 +5723,32 @@ function LoginScreen({ onLogin, onRegister, showToast }: { onLogin: () => void, 
   );
 }
 
-function RegisterScreen({ onBack, onRegister, onLegal, showToast }: { onBack: () => void, onRegister: () => void, onLegal: (type: 'tos' | 'privacy') => void, showToast: (msg: string) => void }) {
+function RegisterScreen({ onBack, onRegister, onLegal, showToast }: { onBack: () => void, onRegister: (name: string, email: string, affiliation: string, password: string) => Promise<void>, onLegal: (type: 'tos' | 'privacy') => void, showToast: (msg: string, type?: 'success' | 'info') => void }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [affiliation, setAffiliation] = useState('');
   const [password, setPassword] = useState('');
   const [agreed, setAgreed] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!agreed) {
-      showToast('Please agree to the Terms of Service and Privacy Policy');
+      showToast('Please agree to the Terms of Service and Privacy Policy', 'info');
       return;
     }
     if (name && email && affiliation && password) {
-      onRegister();
-      showToast('Account created! Welcome to ResearchFlow.');
+      try {
+        setIsSubmitting(true);
+        await onRegister(name, email, affiliation, password);
+        showToast('Account created successfully');
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : 'Unable to create account', 'info');
+      } finally {
+        setIsSubmitting(false);
+      }
     } else {
-      showToast('Please fill in all fields');
+      showToast('Please fill in all fields', 'info');
     }
   };
 
@@ -3098,9 +5821,10 @@ function RegisterScreen({ onBack, onRegister, onLegal, showToast }: { onBack: ()
 
           <button 
             type="submit"
+            disabled={isSubmitting}
             className="w-full bg-primary text-white font-bold py-5 rounded-2xl shadow-xl shadow-primary/20 active:scale-95 transition-all mt-4"
           >
-            Create Account
+            {isSubmitting ? 'Creating Account…' : 'Create Account'}
           </button>
         </form>
       </div>
@@ -3117,10 +5841,13 @@ function Input({ label, value }: { label: string, value: string }) {
   );
 }
 
-function NotificationsScreen({ onDailyDigest, onWeeklyDigest, onBack, showToast }: { onDailyDigest: () => void, onWeeklyDigest: () => void, onBack: () => void, showToast: (msg: string) => void }) {
+function NotificationsScreen({ settings, onOpenNotification, onBack, showToast, onRefreshNotifications }: { settings: UserSettings, onOpenNotification: (notification: Notification) => Promise<void>, onBack: () => void, showToast: (msg: string) => void, onRefreshNotifications: () => Promise<void> }) {
+  const { dataset } = useAppData();
   const [activeTab, setActiveTab] = useState<'all' | 'feeds' | 'activity'>('all');
 
-  const filteredNotifications = MOCK_NOTIFICATIONS.filter(n => {
+  const visibleNotifications = dataset.notifications.filter((notification) => isNotificationVisible(notification, settings));
+
+  const filteredNotifications = visibleNotifications.filter(n => {
     if (activeTab === 'all') return true;
     if (activeTab === 'feeds') return n.type === 'feed';
     if (activeTab === 'activity') return n.type !== 'feed';
@@ -3135,7 +5862,12 @@ function NotificationsScreen({ onDailyDigest, onWeeklyDigest, onBack, showToast 
           <h2 className="text-xl font-bold">Notifications</h2>
         </div>
         <button 
-          onClick={() => showToast('All notifications marked as read')}
+          onClick={() => {
+            markNotificationsRead()
+              .then(onRefreshNotifications)
+              .then(() => showToast('All notifications marked as read'))
+              .catch((error) => showToast(error instanceof Error ? error.message : 'Unable to mark notifications as read'));
+          }}
           className="text-primary font-bold text-sm"
         >
           Mark all
@@ -3169,7 +5901,7 @@ function NotificationsScreen({ onDailyDigest, onWeeklyDigest, onBack, showToast 
             <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-4">New Feed Results</h3>
             <div className="space-y-4">
               {filteredNotifications.filter(n => n.type === 'feed').map(n => (
-                <NotificationItem key={n.id} notification={n} />
+                <NotificationItem key={n.id} notification={n} onClick={() => void onOpenNotification(n)} />
               ))}
             </div>
           </div>
@@ -3180,22 +5912,8 @@ function NotificationsScreen({ onDailyDigest, onWeeklyDigest, onBack, showToast 
             <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-4">Recent Activity</h3>
             <div className="space-y-4">
               {filteredNotifications.filter(n => n.type !== 'feed').map(n => (
-                <NotificationItem key={n.id} notification={n} />
+                <NotificationItem key={n.id} notification={n} onClick={() => void onOpenNotification(n)} />
               ))}
-              {activeTab !== 'feeds' && (
-                <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-start gap-4 shadow-sm">
-                  <div className="size-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500 shrink-0">
-                    <Bookmark className="size-6" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex justify-between items-start mb-1">
-                      <h4 className="text-sm font-bold">Collection shared with you</h4>
-                      <span className="text-[10px] text-slate-400 font-medium">Yesterday</span>
-                    </div>
-                    <p className="text-xs text-slate-500 leading-relaxed">The "Advanced Robotics Lab" shared their bibliography with you.</p>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -3209,12 +5927,21 @@ function NotificationsScreen({ onDailyDigest, onWeeklyDigest, onBack, showToast 
             <p className="text-sm text-slate-500">We'll notify you when something new arrives.</p>
           </div>
         )}
+        {visibleNotifications.length === 0 && activeTab === 'all' && (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="size-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400 mb-4">
+              <BellOff className="size-8" />
+            </div>
+            <h4 className="text-lg font-bold mb-1">No alerts enabled</h4>
+            <p className="text-sm text-slate-500">Turn on publication or citation alerts in Settings to see new items here.</p>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function NotificationItem({ notification }: { notification: Notification, key?: string | number }) {
+function NotificationItem({ notification, onClick }: { notification: Notification, onClick: () => void, key?: string | number }) {
   const getIcon = () => {
     switch (notification.type) {
       case 'feed': return <Rss className="size-6" />;
@@ -3236,7 +5963,7 @@ function NotificationItem({ notification }: { notification: Notification, key?: 
   };
 
   return (
-    <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-start gap-4 shadow-sm">
+    <button type="button" onClick={onClick} className="w-full bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-start gap-4 shadow-sm text-left transition-colors hover:border-primary/30">
       <div className={`size-12 rounded-2xl flex items-center justify-center shrink-0 ${getIconBg()}`}>
         {getIcon()}
       </div>
@@ -3247,7 +5974,8 @@ function NotificationItem({ notification }: { notification: Notification, key?: 
         </div>
         <p className="text-xs text-slate-500 leading-relaxed">{notification.description}</p>
       </div>
-    </div>
+      <ChevronRight className="mt-1 size-4 shrink-0 text-slate-300" />
+    </button>
   );
 }
 
@@ -3259,19 +5987,28 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
   onSearch: (query: string) => void,
   showToast: (msg: string) => void 
 }) {
+  const { dataset } = useAppData();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'global' | 'field'>('global');
+  const [alertsEnabled, setAlertsEnabled] = useState(() => storageService.getTrendAlertsEnabled());
+  const [showAllRisingStars, setShowAllRisingStars] = useState(false);
+  const [volumeWindow, setVolumeWindow] = useState<'12m' | '6m'>('12m');
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      onTagClick(searchQuery);
+      onSearch(searchQuery.trim());
     }
   };
 
-  const filteredMetrics = MOCK_TREND_METRICS.filter(m => 
+  const filteredMetrics = dataset.trendMetrics.filter(m => 
     m.label.toLowerCase().includes(searchQuery.toLowerCase())
   );
+  const displayedMetrics = activeTab === 'field' ? filteredMetrics.filter((metric) => metric.label.toLowerCase().includes('ai') || metric.label.toLowerCase().includes('citation') || metric.label.toLowerCase().includes('save')) : filteredMetrics;
+  const displayedRisingStars = showAllRisingStars ? dataset.risingStars : dataset.risingStars.slice(0, 3);
+  const publicationVolumeData = volumeWindow === '6m' ? dataset.publicationVolume.slice(-6) : dataset.publicationVolume;
+  const totalPublicationCount = publicationVolumeData.reduce((sum, point) => sum + point.papers, 0);
+  const leadingInstitution = [...dataset.institutions].sort((left, right) => right.stats.citations - left.stats.citations)[0];
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950">
@@ -3282,7 +6019,17 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
           </div>
           <h2 className="text-lg font-bold">Research Trends</h2>
         </div>
-        <Bell className="size-5 text-slate-400 cursor-pointer" onClick={() => showToast('Trend alerts enabled')} />
+        <button
+          onClick={() => {
+            const nextValue = !alertsEnabled;
+            setAlertsEnabled(nextValue);
+            storageService.setTrendAlertsEnabled(nextValue);
+            showToast(nextValue ? 'Trend alerts enabled' : 'Trend alerts paused');
+          }}
+          className={`rounded-full p-1.5 transition-colors ${alertsEnabled ? 'bg-primary/10 text-primary' : 'text-slate-400'}`}
+        >
+          <Bell className="size-5" />
+        </button>
       </header>
 
       <div className="p-4 space-y-6 overflow-y-auto no-scrollbar pb-24">
@@ -3313,8 +6060,8 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
         </div>
 
         <div className="grid grid-cols-1 gap-4">
-          {filteredMetrics.length > 0 ? (
-            filteredMetrics.map((metric, i) => (
+          {displayedMetrics.length > 0 ? (
+            displayedMetrics.map((metric, i) => (
               <div 
                 key={i} 
                 onClick={() => onTagClick(metric.label.split(' ')[0])}
@@ -3345,16 +6092,16 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
           <div className="flex justify-between items-center mb-6">
             <div>
               <h3 className="text-lg font-bold">Publication Volume</h3>
-              <p className="text-xs text-slate-500">Global monthly research output</p>
+              <p className="text-xs text-slate-500">{totalPublicationCount.toLocaleString()} papers across the current research window</p>
             </div>
             <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
-              <button className="px-3 py-1 text-[10px] font-bold bg-white dark:bg-slate-700 rounded shadow-sm">12M</button>
-              <button className="px-3 py-1 text-[10px] font-bold text-slate-500">6M</button>
+              <button type="button" onClick={() => setVolumeWindow('12m')} className={`px-3 py-1 text-[10px] font-bold rounded ${volumeWindow === '12m' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary' : 'text-slate-500'}`}>12M</button>
+              <button type="button" onClick={() => setVolumeWindow('6m')} className={`px-3 py-1 text-[10px] font-bold rounded ${volumeWindow === '6m' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary' : 'text-slate-500'}`}>6M</button>
             </div>
           </div>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={MOCK_PUBLICATION_VOLUME}>
+              <AreaChart data={publicationVolumeData}>
                 <defs>
                   <linearGradient id="colorPapers" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
@@ -3373,8 +6120,8 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
             </ResponsiveContainer>
           </div>
           <div className="flex justify-between text-[10px] font-bold text-slate-400 mt-4 uppercase tracking-wider">
-            <span>Oct 2023</span>
-            <span>Sep 2024</span>
+            <span>{publicationVolumeData[0]?.month ?? 'Start'}</span>
+            <span>{publicationVolumeData[publicationVolumeData.length - 1]?.month ?? 'Now'}</span>
           </div>
         </div>
 
@@ -3412,7 +6159,7 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
           </div>
           <div className="h-48 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={MOCK_WEEKLY_TRENDS}>
+              <BarChart data={dataset.weeklyTrends}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700 }} />
                 <YAxis hide />
@@ -3442,10 +6189,12 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
               <Zap className="size-5 text-primary" />
               <h3 className="text-lg font-bold">Rising Stars</h3>
             </div>
-            <button onClick={() => showToast('Full directory coming soon')} className="text-xs font-bold text-primary">View All</button>
+            <button onClick={() => setShowAllRisingStars((current) => !current)} className="text-xs font-bold text-primary">
+              {showAllRisingStars ? 'Show Less' : 'View All'}
+            </button>
           </div>
           <div className="space-y-6">
-            {MOCK_RISING_STARS.map(star => (
+            {displayedRisingStars.map(star => (
               <div 
                 key={star.id} 
                 className="flex items-center gap-4 cursor-pointer group"
@@ -3470,7 +6219,10 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
             <Search className="size-5 text-primary" />
             <h3 className="text-lg font-bold">Find Researchers & Institutions</h3>
           </div>
-          <p className="text-xs text-slate-500 mb-6">Connect with experts and explore leading research centers globally.</p>
+          <p className="text-xs text-slate-500 mb-6">
+            Connect with experts and explore leading research centers.
+            {leadingInstitution ? ` Current citation leader: ${leadingInstitution.name}.` : ''}
+          </p>
           
           <div className="space-y-3">
             <button 
@@ -3526,7 +6278,34 @@ function MetricCard({ label, value, change, icon }: { label: string, value: stri
   );
 }
 
-function DailyDigestScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
+function DailyDigestScreen({ onBack, onOpenSettings, onOpenHelp, onOpenNotifications, onUnsubscribe, isSubscribed, showToast }: { onBack: () => void, onOpenSettings: () => void, onOpenHelp: () => void, onOpenNotifications: () => void, onUnsubscribe: () => Promise<void>, isSubscribed: boolean, showToast: (msg: string) => void }) {
+  const { dataset } = useAppData();
+  const digestTopics = [...new Set(dataset.digestPapers.map(paper => paper.topic))].slice(0, 2);
+  const totalCitations = dataset.preprints.reduce((sum, preprint) => sum + (preprint.citations || 0), 0);
+  const [summaryFilter, setSummaryFilter] = useState<'matches' | 'citations'>('matches');
+  const [expandedTopics, setExpandedTopics] = useState<string[]>([]);
+  const [expandedPaperId, setExpandedPaperId] = useState<string | null>(null);
+  const [isUnsubscribing, setIsUnsubscribing] = useState(false);
+  const filteredDigestPapers = summaryFilter === 'matches'
+    ? dataset.digestPapers
+    : dataset.digestPapers.filter((paper) => (findPreprintForDigestPaper(dataset.preprints, paper)?.citations ?? 0) > 0);
+
+  const handleUnsubscribe = async () => {
+    if (!isSubscribed) {
+      showToast('Daily digest is already disabled.');
+      return;
+    }
+    try {
+      setIsUnsubscribing(true);
+      await onUnsubscribe();
+      showToast('Daily digest disabled.');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to update digest preference.');
+    } finally {
+      setIsUnsubscribing(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950 overflow-y-auto no-scrollbar">
       <header className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between sticky top-0 bg-white dark:bg-slate-950 z-20">
@@ -3540,7 +6319,7 @@ function DailyDigestScreen({ onBack, showToast }: { onBack: () => void, showToas
             <p className="text-[10px] font-bold text-primary uppercase tracking-widest">Daily Update</p>
           </div>
         </div>
-        <span className="text-xs font-bold text-slate-400">October 24, 2023</span>
+        <span className="text-xs font-bold text-slate-400">{formatAbsoluteDate(new Date())}</span>
       </header>
 
       <div className="p-6 space-y-12 pb-24">
@@ -3548,31 +6327,39 @@ function DailyDigestScreen({ onBack, showToast }: { onBack: () => void, showToas
           <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-[0.2em] mb-6">At a Glance</h3>
           <div className="grid grid-cols-2 gap-4">
             <div 
-              onClick={() => showToast('Showing new matches')}
-              className="bg-blue-50/50 dark:bg-blue-900/10 p-6 rounded-2xl border border-blue-100 dark:border-blue-900/30 cursor-pointer hover:bg-blue-50 transition-colors"
+              onClick={() => setSummaryFilter('matches')}
+              className={`p-6 rounded-2xl border cursor-pointer transition-colors ${
+                summaryFilter === 'matches'
+                  ? 'bg-blue-50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-900/30'
+                  : 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-900/30'
+              }`}
             >
               <div className="flex items-center gap-2 text-primary mb-4">
                 <Zap className="size-4" />
                 <span className="text-[10px] font-bold uppercase tracking-wider">New Matches</span>
               </div>
-              <p className="text-4xl font-bold mb-1">12</p>
+              <p className="text-4xl font-bold mb-1">{dataset.preprints.length}</p>
               <p className="text-[10px] text-slate-500 leading-tight">Based on your interests</p>
             </div>
             <div 
-              onClick={() => showToast('Showing citations found')}
-              className="bg-slate-50 dark:bg-slate-800/30 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 cursor-pointer hover:bg-slate-100 transition-colors"
+              onClick={() => setSummaryFilter('citations')}
+              className={`p-6 rounded-2xl border cursor-pointer transition-colors ${
+                summaryFilter === 'citations'
+                  ? 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+                  : 'bg-slate-50 dark:bg-slate-800/30 border-slate-100 dark:border-slate-800'
+              }`}
             >
               <div className="flex items-center gap-2 text-primary mb-4">
                 <Quote className="size-4" />
                 <span className="text-[10px] font-bold uppercase tracking-wider">Citations Found</span>
               </div>
-              <p className="text-4xl font-bold mb-1">3</p>
+              <p className="text-4xl font-bold mb-1">{Math.max(1, Math.round(totalCitations / Math.max(dataset.preprints.length, 1)))}</p>
               <p className="text-[10px] text-slate-500 leading-tight">Found in recent publications</p>
             </div>
           </div>
         </div>
 
-        {['Quantum Computing', 'Neural Networks'].map(topic => (
+        {digestTopics.map(topic => (
           <div key={topic}>
             <div className="flex justify-between items-center mb-8">
               <div className="flex items-center gap-3">
@@ -3581,24 +6368,38 @@ function DailyDigestScreen({ onBack, showToast }: { onBack: () => void, showToas
                 </div>
                 <h3 className="text-xl font-bold">{topic}</h3>
               </div>
-              <button className="text-xs font-bold text-primary uppercase tracking-widest">See all</button>
+              <button
+                onClick={() => setExpandedTopics((current) => current.includes(topic) ? current.filter((item) => item !== topic) : [...current, topic])}
+                className="text-xs font-bold text-primary uppercase tracking-widest"
+              >
+                {expandedTopics.includes(topic) ? 'Show less' : 'See all'}
+              </button>
             </div>
             <div className="space-y-12">
-              {MOCK_DIGEST_PAPERS.filter(p => p.topic === topic).map(paper => (
+              {filteredDigestPapers.filter(p => p.topic === topic).slice(0, expandedTopics.includes(topic) ? undefined : 1).map(paper => {
+                const linkedPreprint = findPreprintForDigestPaper(dataset.preprints, paper);
+                const isExpanded = expandedPaperId === paper.id;
+                return (
                 <div key={paper.id} className="space-y-6">
                   <div>
                     <h4 className="text-xl font-bold leading-tight mb-2">{paper.title}</h4>
                     <p className="text-xs text-slate-500 font-medium italic">{paper.authors} • Published in {paper.source}</p>
                   </div>
                   <button 
-                    onClick={() => showToast(`Opening abstract for "${paper.title}"`)}
+                    onClick={() => setExpandedPaperId(isExpanded ? null : paper.id)}
                     className="bg-primary text-white px-6 py-3 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-primary/20 hover:scale-105 transition-transform"
                   >
-                    View Abstract <ExternalLink className="size-4" />
+                    {isExpanded ? 'Hide Abstract' : 'View Abstract'} <ExternalLink className="size-4" />
                   </button>
+                  {isExpanded && (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+                      {linkedPreprint?.abstract ?? 'No abstract is available for this digest item yet.'}
+                    </div>
+                  )}
                   <img src={paper.imageUrl} alt="" className="w-full aspect-video rounded-3xl object-cover shadow-2xl" />
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))}
@@ -3606,7 +6407,7 @@ function DailyDigestScreen({ onBack, showToast }: { onBack: () => void, showToas
         <div>
           <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-[0.2em] mb-6">Recent Activity</h3>
           <div className="space-y-4">
-            {MOCK_DIGEST_ACTIVITY.map(activity => (
+            {dataset.digestActivity.map(activity => (
               <div key={activity.id} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-center gap-5 shadow-sm">
                 <div className={`size-12 rounded-xl flex items-center justify-center shrink-0 ${activity.type === 'citation' ? 'bg-emerald-50 text-emerald-500' : 'bg-blue-50 text-blue-500'}`}>
                   {activity.type === 'citation' ? <Quote className="size-6" /> : <UserPlus className="size-6" />}
@@ -3621,22 +6422,30 @@ function DailyDigestScreen({ onBack, showToast }: { onBack: () => void, showToas
 
         <footer className="pt-12 pb-8 text-center space-y-10 border-t border-slate-100 dark:border-slate-800">
           <div className="flex justify-center gap-10 text-slate-400">
-            <Settings className="size-6 cursor-pointer hover:text-primary transition-colors" />
-            <Bell className="size-6 cursor-pointer hover:text-primary transition-colors" />
-            <HelpCircle className="size-6 cursor-pointer hover:text-primary transition-colors" />
+            <button type="button" onClick={onOpenSettings} className="hover:text-primary transition-colors" aria-label="Open settings">
+              <Settings className="size-6" />
+            </button>
+            <button type="button" onClick={onOpenNotifications} className="hover:text-primary transition-colors" aria-label="Open notifications">
+              <Bell className="size-6" />
+            </button>
+            <button type="button" onClick={onOpenHelp} className="hover:text-primary transition-colors" aria-label="Open help">
+              <HelpCircle className="size-6" />
+            </button>
           </div>
           <div className="space-y-4">
             <p className="text-[10px] text-slate-400 leading-relaxed max-w-[280px] mx-auto font-medium">
               Sent to you because you're following these research areas.
             </p>
             <div className="flex justify-center gap-6 text-[10px] font-bold uppercase tracking-widest">
-              <button className="text-primary hover:underline">Manage Digest Frequency</button>
+              <button type="button" onClick={onOpenSettings} className="text-primary hover:underline">Manage Digest Frequency</button>
               <span className="text-slate-200">•</span>
-              <button className="text-slate-400 hover:text-slate-600">Unsubscribe</button>
+              <button type="button" onClick={() => void handleUnsubscribe()} disabled={isUnsubscribing || !isSubscribed} className="text-slate-400 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50">
+                {isSubscribed ? (isUnsubscribing ? 'Updating…' : 'Unsubscribe') : 'Unsubscribed'}
+              </button>
             </div>
           </div>
           <div className="text-[8px] font-bold text-slate-300 uppercase tracking-[0.3em]">
-            © 2023 RESEARCHFLOW INC. • 123 SCIENCE PLAZA, PALO ALTO, CA
+            © 2026 PREPRINT EXPLORER
           </div>
         </footer>
       </div>
@@ -3644,7 +6453,61 @@ function DailyDigestScreen({ onBack, showToast }: { onBack: () => void, showToas
   );
 }
 
-function WeeklyDigestScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
+function WeeklyDigestScreen({ onBack, onOpenLibrary, onOpenProfile, onOpenHome, onOpenSettings, onUnsubscribe, isSubscribed, showToast }: { onBack: () => void, onOpenLibrary: () => void, onOpenProfile: () => void, onOpenHome: () => void, onOpenSettings: () => void, onUnsubscribe: () => Promise<void>, isSubscribed: boolean, showToast: (msg: string) => void }) {
+  const { dataset } = useAppData();
+  const totalMatches = dataset.preprints.length;
+  const totalCitations = dataset.preprints.reduce((sum, preprint) => sum + (preprint.citations || 0), 0);
+  const [showFullReport, setShowFullReport] = useState(false);
+  const [isUnsubscribing, setIsUnsubscribing] = useState(false);
+  const topSavedPaper = [...dataset.preprints].sort((a, b) => (b.savesCount ?? 0) - (a.savesCount ?? 0))[0];
+  const topDiscussedPaper = [...dataset.preprints].sort((a, b) => (b.comments?.length ?? 0) - (a.comments?.length ?? 0))[0];
+  const keyContributors = [...dataset.risingStars].slice(0, showFullReport ? 6 : 3);
+  const weeklyInterestSummary = dataset.weeklyTrends.reduce((acc, point) => ({
+    quantum: acc.quantum + point.quantum,
+    ai: acc.ai + point.ai,
+  }), { quantum: 0, ai: 0 });
+  const dominantTopic = weeklyInterestSummary.quantum >= weeklyInterestSummary.ai ? 'Quantum Computing' : 'Artificial Intelligence';
+  const dominantTopicValue = Math.max(weeklyInterestSummary.quantum, weeklyInterestSummary.ai);
+  const citationGrowthPercent = totalCitations > 0 ? Math.round((totalCitations / Math.max(totalMatches, 1)) * 10) : 0;
+  const totalPreviousMatches = dataset.weeklyTrends.slice(0, -1).reduce((sum, point) => sum + point.quantum + point.ai, 0);
+  const totalCurrentMatches = dataset.weeklyTrends.reduce((sum, point) => sum + point.quantum + point.ai, 0);
+  const matchGrowthPercent = totalPreviousMatches > 0
+    ? Math.round(((totalCurrentMatches - totalPreviousMatches) / totalPreviousMatches) * 100)
+    : 0;
+  const averageTopicInteractions = Math.round(dominantTopicValue / Math.max(dataset.weeklyTrends.length, 1));
+  const newPaperGrowthPercent = totalMatches > 1
+    ? Math.round(((dataset.digestPapers.length - Math.max(totalMatches - dataset.digestPapers.length, 1)) / Math.max(totalMatches - dataset.digestPapers.length, 1)) * 100)
+    : 0;
+
+  const handleCopyDigestLink = async () => {
+    try {
+      await copyText(`${window.location.origin}/digest/weekly`);
+      showToast('Weekly digest link copied to clipboard!');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to copy weekly digest link');
+    }
+  };
+
+  const handleOpenDigestPaper = (preprint: Preprint) => {
+    openPreprintAsset(preprint, showToast);
+  };
+
+  const handleUnsubscribe = async () => {
+    if (!isSubscribed) {
+      showToast('Weekly digest is already disabled.');
+      return;
+    }
+    try {
+      setIsUnsubscribing(true);
+      await onUnsubscribe();
+      showToast('Weekly digest disabled.');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to update digest preference.');
+    } finally {
+      setIsUnsubscribing(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-y-auto no-scrollbar">
       <header className="p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between sticky top-0 z-20">
@@ -3657,13 +6520,13 @@ function WeeklyDigestScreen({ onBack, showToast }: { onBack: () => void, showToa
         </div>
         <Share2 
           className="size-5 text-slate-400 cursor-pointer" 
-          onClick={() => showToast('Weekly digest link copied to clipboard!')}
+          onClick={() => void handleCopyDigestLink()}
         />
       </header>
 
       <div className="p-6 space-y-10 pb-24">
         <div>
-          <p className="text-[10px] font-bold text-primary uppercase tracking-[0.2em] mb-3">Oct 23 - Oct 30, 2023</p>
+          <p className="text-[10px] font-bold text-primary uppercase tracking-[0.2em] mb-3">Week of {formatAbsoluteDate(new Date())}</p>
           <h1 className="text-4xl font-bold leading-tight mb-4">Your research week in review</h1>
           <p className="text-sm text-slate-500 leading-relaxed font-medium">
             We've synthesized the latest breakthroughs and your personal engagement metrics for the past 7 days.
@@ -3674,37 +6537,39 @@ function WeeklyDigestScreen({ onBack, showToast }: { onBack: () => void, showToa
           <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Total Matches</p>
             <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold">128</span>
-              <span className="text-emerald-500 text-xs font-bold">+12%</span>
+              <span className="text-4xl font-bold">{totalMatches}</span>
+              <span className={`text-xs font-bold ${matchGrowthPercent >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{matchGrowthPercent >= 0 ? '+' : ''}{matchGrowthPercent}%</span>
             </div>
           </div>
           <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Citations</p>
             <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold">42</span>
-              <span className="text-emerald-500 text-xs font-bold">+5%</span>
+              <span className="text-4xl font-bold">{totalCitations}</span>
+              <span className="text-emerald-500 text-xs font-bold">+{citationGrowthPercent}%</span>
             </div>
           </div>
           <div className="col-span-2 bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">New Papers</p>
             <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold">15</span>
-              <span className="text-emerald-500 text-xs font-bold">+8%</span>
+              <span className="text-4xl font-bold">{dataset.digestPapers.length}</span>
+              <span className={`text-xs font-bold ${newPaperGrowthPercent >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{newPaperGrowthPercent >= 0 ? '+' : ''}{newPaperGrowthPercent}%</span>
             </div>
           </div>
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-8 rounded-[40px] border border-slate-200 dark:border-slate-800 shadow-sm">
-          <div className="flex justify-between items-center mb-8">
-            <h3 className="text-xl font-bold">Analytics Spotlight</h3>
-            <button className="text-xs font-bold text-primary">View full report</button>
+            <div className="flex justify-between items-center mb-8">
+              <h3 className="text-xl font-bold">Analytics Spotlight</h3>
+            <button onClick={() => setShowFullReport((current) => !current)} className="text-xs font-bold text-primary">
+              {showFullReport ? 'Show summary' : 'View full report'}
+            </button>
           </div>
           
           <div className="mb-8">
-            <p className="text-sm text-slate-500 mb-6 font-medium">Interest trends in your core research areas</p>
+            <p className="text-sm text-slate-500 mb-6 font-medium">{dominantTopic} led this week with {dominantTopicValue.toLocaleString()} tracked interactions, averaging {averageTopicInteractions.toLocaleString()} per day.</p>
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={MOCK_WEEKLY_TRENDS}>
+                <BarChart data={dataset.weeklyTrends}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                   <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} />
                   <YAxis hide />
@@ -3733,31 +6598,35 @@ function WeeklyDigestScreen({ onBack, showToast }: { onBack: () => void, showToa
         <div>
           <h3 className="text-2xl font-bold mb-8">Top Papers of the Week</h3>
           <div className="space-y-4">
-            <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
-              <div className="absolute top-0 left-0 w-1 h-full bg-amber-400"></div>
-              <div className="flex justify-between items-start mb-4">
-                <span className="bg-amber-50 text-amber-600 text-[8px] font-bold px-2 py-1 rounded uppercase tracking-widest">Most Saved</span>
-                <div className="flex flex-col items-center">
-                  <Bookmark className="size-5 text-primary fill-primary" />
-                  <span className="text-[10px] font-bold mt-1">1.2k</span>
+            {topSavedPaper && (
+              <button type="button" onClick={() => handleOpenDigestPaper(topSavedPaper)} className="w-full bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group text-left">
+                <div className="absolute top-0 left-0 w-1 h-full bg-amber-400"></div>
+                <div className="flex justify-between items-start mb-4">
+                  <span className="bg-amber-50 text-amber-600 text-[8px] font-bold px-2 py-1 rounded uppercase tracking-widest">Most Saved</span>
+                  <div className="flex flex-col items-center">
+                    <Bookmark className="size-5 text-primary fill-primary" />
+                    <span className="text-[10px] font-bold mt-1">{(topSavedPaper.savesCount ?? 0).toLocaleString()}</span>
+                  </div>
                 </div>
-              </div>
-              <h4 className="text-lg font-bold leading-tight mb-2 group-hover:text-primary transition-colors">Scalable Transformer Architectures for Large Language Models</h4>
-              <p className="text-xs text-slate-500 font-medium">J. Doe, A. Smith • Stanford University</p>
-            </div>
+                <h4 className="text-lg font-bold leading-tight mb-2 group-hover:text-primary transition-colors">{topSavedPaper.title}</h4>
+                <p className="text-xs text-slate-500 font-medium">{topSavedPaper.authors.join(', ')} • {topSavedPaper.source}</p>
+              </button>
+            )}
 
-            <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
-              <div className="absolute top-0 left-0 w-1 h-full bg-blue-400"></div>
-              <div className="flex justify-between items-start mb-4">
-                <span className="bg-blue-50 text-blue-600 text-[8px] font-bold px-2 py-1 rounded uppercase tracking-widest">High Engagement</span>
-                <div className="flex flex-col items-center">
-                  <MessageSquare className="size-5 text-primary fill-primary" />
-                  <span className="text-[10px] font-bold mt-1">842</span>
+            {topDiscussedPaper && (
+              <button type="button" onClick={() => handleOpenDigestPaper(topDiscussedPaper)} className="w-full bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group text-left">
+                <div className="absolute top-0 left-0 w-1 h-full bg-blue-400"></div>
+                <div className="flex justify-between items-start mb-4">
+                  <span className="bg-blue-50 text-blue-600 text-[8px] font-bold px-2 py-1 rounded uppercase tracking-widest">High Engagement</span>
+                  <div className="flex flex-col items-center">
+                    <MessageSquare className="size-5 text-primary fill-primary" />
+                    <span className="text-[10px] font-bold mt-1">{(topDiscussedPaper.comments?.length ?? 0).toLocaleString()}</span>
+                  </div>
                 </div>
-              </div>
-              <h4 className="text-lg font-bold leading-tight mb-2 group-hover:text-primary transition-colors">Quantum Error Correction: A New Paradigm for Fault Tolerance</h4>
-              <p className="text-xs text-slate-500 font-medium">R. Feynman, et al. • MIT Press</p>
-            </div>
+                <h4 className="text-lg font-bold leading-tight mb-2 group-hover:text-primary transition-colors">{topDiscussedPaper.title}</h4>
+                <p className="text-xs text-slate-500 font-medium">{topDiscussedPaper.authors.join(', ')} • {topDiscussedPaper.source}</p>
+              </button>
+            )}
           </div>
         </div>
 
@@ -3767,44 +6636,46 @@ function WeeklyDigestScreen({ onBack, showToast }: { onBack: () => void, showToa
             <h3 className="text-xl font-bold">Citation Growth</h3>
           </div>
           <p className="text-sm leading-relaxed opacity-90 font-medium">
-            Your research papers saw a 24% increase in discoverability this week compared to last month.
+            Your tracked papers accumulated {totalCitations.toLocaleString()} citations across {totalMatches.toLocaleString()} current matches.
           </p>
           <div className="flex items-baseline gap-3">
-            <span className="text-5xl font-bold">1,482</span>
-            <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold">+24.5%</span>
+            <span className="text-5xl font-bold">{totalCitations.toLocaleString()}</span>
+            <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold">+{citationGrowthPercent}%</span>
           </div>
-          <button className="w-full bg-white text-primary py-4 rounded-2xl font-bold shadow-xl hover:scale-[1.02] transition-transform">
+            <button onClick={() => setShowFullReport(true)} className="w-full bg-white text-primary py-4 rounded-2xl font-bold shadow-xl hover:scale-[1.02] transition-transform">
             Explore Your Network
           </button>
         </div>
 
         <footer className="pt-12 pb-8 text-center space-y-10 border-t border-slate-100 dark:border-slate-800">
           <div className="flex justify-around text-slate-400">
-            <div className="flex flex-col items-center gap-1">
+            <button type="button" onClick={onOpenHome} className="flex flex-col items-center gap-1">
               <Rss className="size-6" />
               <span className="text-[8px] font-bold uppercase tracking-widest">Feed</span>
-            </div>
-            <div className="flex flex-col items-center gap-1">
+            </button>
+            <button type="button" onClick={onOpenLibrary} className="flex flex-col items-center gap-1">
               <BookMarked className="size-6" />
               <span className="text-[8px] font-bold uppercase tracking-widest">Library</span>
-            </div>
-            <div className="flex flex-col items-center gap-1 text-primary">
+            </button>
+            <button type="button" onClick={() => setShowFullReport(true)} className="flex flex-col items-center gap-1 text-primary">
               <BarChart3 className="size-6" />
               <span className="text-[8px] font-bold uppercase tracking-widest">Analytics</span>
-            </div>
-            <div className="flex flex-col items-center gap-1">
+            </button>
+            <button type="button" onClick={onOpenProfile} className="flex flex-col items-center gap-1">
               <UserIcon className="size-6" />
               <span className="text-[8px] font-bold uppercase tracking-widest">Profile</span>
-            </div>
+            </button>
           </div>
           <div className="space-y-4">
             <p className="text-[10px] text-slate-400 leading-relaxed max-w-[280px] mx-auto font-medium">
               You're receiving this because you're subscribed to Weekly Digest.
             </p>
             <div className="flex justify-center gap-6 text-[10px] font-bold uppercase tracking-widest">
-              <button className="text-slate-500 hover:underline">Manage Preferences</button>
+              <button type="button" onClick={onOpenSettings} className="text-slate-500 hover:underline">Manage Preferences</button>
               <span className="text-slate-200">•</span>
-              <button className="text-slate-500 hover:text-slate-600">Unsubscribe</button>
+              <button type="button" onClick={() => void handleUnsubscribe()} disabled={isUnsubscribing || !isSubscribed} className="text-slate-500 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50">
+                {isSubscribed ? (isUnsubscribing ? 'Updating…' : 'Unsubscribe') : 'Unsubscribed'}
+              </button>
             </div>
           </div>
         </footer>
@@ -3820,11 +6691,58 @@ function TopicInsightScreen({ onBack, onPreprintClick, onTagClick, onAuthorClick
   onAuthorClick: (author: string) => void,
   showToast: (msg: string) => void
 }) {
+  const { dataset } = useAppData();
   const [isFollowing, setIsFollowing] = useState(false);
+  const [alertsEnabled, setAlertsEnabled] = useState(false);
+  const [showAllPapers, setShowAllPapers] = useState(false);
+  const [showAllContributors, setShowAllContributors] = useState(false);
+  const topicPapers = [...dataset.preprints]
+    .filter((preprint) => preprint.tags.some((tag) => /language|ai|machine|learning|llm|nlp/i.test(tag)) || /language|ai|machine|learning|llm|nlp/i.test(preprint.title))
+    .sort((left, right) => (right.citations || 0) - (left.citations || 0));
+  const visibleTopicPapers = showAllPapers ? topicPapers : topicPapers.slice(0, 3);
+  const visibleContributors = showAllContributors ? dataset.risingStars : dataset.risingStars.slice(0, 3);
+  const totalTopicCitations = topicPapers.reduce((sum, preprint) => sum + (preprint.citations || 0), 0);
+  const totalTopicViews = topicPapers.reduce((sum, preprint) => sum + (preprint.views || 0), 0);
+  const growthScore = Math.min(100, Math.round((totalTopicCitations / Math.max(topicPapers.length, 1)) / 4));
+  const averageViews = Math.round(totalTopicViews / Math.max(topicPapers.length, 1));
+  const interestLabel = averageViews > 5000 ? 'Very High' : averageViews > 2000 ? 'High' : averageViews > 700 ? 'Moderate' : 'Emerging';
+  const publicationTrendData = Object.entries(topicPapers.reduce<Record<string, number>>((acc, preprint) => {
+    const parsed = new Date(preprint.publishedAt ?? preprint.date);
+    const year = Number.isNaN(parsed.getTime()) ? '2026' : String(parsed.getFullYear());
+    acc[year] = (acc[year] ?? 0) + 1;
+    return acc;
+  }, {}))
+    .sort(([left], [right]) => Number(left) - Number(right))
+    .map(([year, papers]) => ({ year, papers }));
+  const growthDelta = topicPapers.length > 1
+    ? Math.round((((topicPapers[0]?.views || 0) - (topicPapers[Math.min(topicPapers.length - 1, 2)]?.views || 0)) / Math.max(topicPapers[Math.min(topicPapers.length - 1, 2)]?.views || 1, 1)) * 100)
+    : 0;
+  const inferredTopicLabel = topicPapers[0]?.tags.find((tag) => /language|ai|machine|learning|llm|nlp/i.test(tag)) ?? 'Large Language Models';
+  const inferredTopicSlug = slugifyLabel(inferredTopicLabel) || 'topic';
+  const inferredTopicCategory = [...new Set(topicPapers.flatMap((preprint) => preprint.tags))].slice(0, 2).join(' • ') || 'Artificial Intelligence';
+  const subTopicCounts = topicPapers.flatMap((preprint) => preprint.tags).reduce<Record<string, number>>((acc, tag) => {
+    acc[tag] = (acc[tag] ?? 0) + 1;
+    return acc;
+  }, {});
+  const trendingSubTopics = Object.entries(subTopicCounts)
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 7)
+    .map(([label], index) => ({ label, active: index === 0 }));
+
+  useEffect(() => {
+    const preference = storageService.getTopicPreference(inferredTopicSlug);
+    setIsFollowing(preference.followed);
+    setAlertsEnabled(preference.alertsEnabled);
+  }, [inferredTopicSlug]);
 
   const handleFollow = () => {
-    setIsFollowing(!isFollowing);
-    showToast(isFollowing ? 'Unfollowed Large Language Models' : 'Following Large Language Models');
+    const nextValue = !isFollowing;
+    setIsFollowing(nextValue);
+    storageService.setTopicPreference(inferredTopicSlug, {
+      followed: nextValue,
+      alertsEnabled,
+    });
+    showToast(nextValue ? `Following ${inferredTopicLabel}` : `Unfollowed ${inferredTopicLabel}`);
   };
 
   return (
@@ -3832,7 +6750,10 @@ function TopicInsightScreen({ onBack, onPreprintClick, onTagClick, onAuthorClick
       <header className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between sticky top-0 bg-white dark:bg-background-dark z-20">
         <ArrowLeft className="cursor-pointer" onClick={onBack} />
         <h2 className="text-lg font-bold">Topic Insight</h2>
-        <Share2 className="size-5 text-slate-400 cursor-pointer" onClick={() => showToast('Topic shared to your network!')} />
+        <Share2
+          className="size-5 text-slate-400 cursor-pointer"
+          onClick={() => void copyText(`${window.location.origin}/topics/${inferredTopicSlug}`).then(() => showToast('Topic link copied to clipboard')).catch((error) => showToast(error instanceof Error ? error.message : 'Unable to copy topic link'))}
+        />
       </header>
 
       <div className="p-6 space-y-8">
@@ -3841,8 +6762,8 @@ function TopicInsightScreen({ onBack, onPreprintClick, onTagClick, onAuthorClick
             <img src="https://picsum.photos/seed/llm/200/200" alt="" className="w-full h-full object-cover opacity-80" />
           </div>
           <div className="flex-1">
-            <h1 className="text-2xl font-bold leading-tight">Large Language Models</h1>
-            <p className="text-sm text-slate-500 font-medium">Artificial Intelligence • NLP</p>
+            <h1 className="text-2xl font-bold leading-tight">{inferredTopicLabel}</h1>
+            <p className="text-sm text-slate-500 font-medium">{inferredTopicCategory}</p>
           </div>
         </div>
 
@@ -3851,11 +6772,19 @@ function TopicInsightScreen({ onBack, onPreprintClick, onTagClick, onAuthorClick
             onClick={handleFollow}
             className={`flex-1 font-bold py-4 rounded-xl shadow-lg transition-all ${isFollowing ? 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 shadow-none' : 'bg-orange-500 text-white shadow-orange-500/20'}`}
           >
-            {isFollowing ? 'Following Topic' : 'Follow Topic'}
+            {isFollowing ? 'Following Topic' : `Follow ${inferredTopicLabel}`}
           </button>
           <button 
-            onClick={() => showToast('Topic alerts enabled!')}
-            className="bg-slate-100 dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700"
+            onClick={() => {
+              const nextValue = !alertsEnabled;
+              setAlertsEnabled(nextValue);
+              storageService.setTopicPreference(inferredTopicSlug, {
+                followed: isFollowing,
+                alertsEnabled: nextValue,
+              });
+              showToast(nextValue ? 'Topic alerts enabled!' : 'Topic alerts paused');
+            }}
+            className={`p-4 rounded-xl border ${alertsEnabled ? 'bg-orange-50 border-orange-200 text-orange-500 dark:bg-orange-500/10 dark:border-orange-400/20' : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700'}`}
           >
             <Bell className="size-6 text-slate-400" />
           </button>
@@ -3865,19 +6794,19 @@ function TopicInsightScreen({ onBack, onPreprintClick, onTagClick, onAuthorClick
           <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Growth Score</p>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold">98/100</span>
+              <span className="text-3xl font-bold">{growthScore}/100</span>
             </div>
             <span className="text-emerald-500 text-xs font-bold flex items-center gap-1 mt-1">
-              <TrendingUp className="size-3" /> +15.4%
+              <TrendingUp className="size-3" /> {growthDelta >= 0 ? '+' : ''}{growthDelta}%
             </span>
           </div>
           <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Current Interest</p>
             <div className="flex items-baseline gap-2">
-              <span className="text-xl font-bold">Very High</span>
+              <span className="text-xl font-bold">{interestLabel}</span>
             </div>
             <span className="text-emerald-500 text-xs font-bold flex items-center gap-1 mt-1">
-              <TrendingUp className="size-3" /> +8.2%
+              <TrendingUp className="size-3" /> {averageViews.toLocaleString()} avg. views
             </span>
           </div>
         </div>
@@ -3885,43 +6814,35 @@ function TopicInsightScreen({ onBack, onPreprintClick, onTagClick, onAuthorClick
         <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
           <div className="mb-8">
             <h3 className="text-lg font-bold">Publication Trend</h3>
-            <p className="text-xs text-slate-500 mt-1">12,542 <span className="text-slate-400">Papers (Last 5 Years)</span></p>
+            <p className="text-xs text-slate-500 mt-1">{topicPapers.length.toLocaleString()} <span className="text-slate-400">Papers in this topic cluster</span></p>
           </div>
           <div className="h-48 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={[
-                { year: '2020', papers: 2000 },
-                { year: '2021', papers: 3500 },
-                { year: '2022', papers: 5000 },
-                { year: '2023', papers: 8500 },
-                { year: '2024', papers: 12542 },
-              ]}>
+              <LineChart data={publicationTrendData}>
                 <Line type="monotone" dataKey="papers" stroke="#f97316" strokeWidth={4} dot={false} />
                 <Tooltip content={() => null} />
               </LineChart>
             </ResponsiveContainer>
           </div>
           <div className="flex justify-between text-[10px] font-bold text-slate-400 mt-4">
-            <span>2020</span>
-            <span>2021</span>
-            <span>2022</span>
-            <span>2023</span>
-            <span>2024</span>
+            {publicationTrendData.length > 0 ? (
+              <>
+                <span>{publicationTrendData[0]?.year}</span>
+                <span>{publicationTrendData[publicationTrendData.length - 1]?.year}</span>
+              </>
+            ) : (
+              <>
+                <span>Start</span>
+                <span>Now</span>
+              </>
+            )}
           </div>
         </div>
 
         <div>
           <h3 className="text-lg font-bold mb-4">Trending Sub-topics</h3>
           <div className="flex flex-wrap gap-2">
-            {[
-              { label: 'Transformer', active: true },
-              { label: 'Reinforcement Learning', active: false },
-              { label: 'Fine-tuning', active: false },
-              { label: 'Prompt Engineering', active: false },
-              { label: 'Attention Mechanism', active: false },
-              { label: 'RAG', active: false },
-              { label: 'Context Window', active: false }
-            ].map((tag, i) => (
+            {trendingSubTopics.map((tag, i) => (
               <button 
                 key={i} 
                 onClick={() => onTagClick(tag.label)}
@@ -3938,10 +6859,12 @@ function TopicInsightScreen({ onBack, onPreprintClick, onTagClick, onAuthorClick
         <div>
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-lg font-bold">Top Cited Papers</h3>
-            <button className="text-xs font-bold text-primary">View all</button>
+            <button onClick={() => setShowAllPapers((current) => !current)} className="text-xs font-bold text-primary">
+              {showAllPapers ? 'Show less' : 'View all'}
+            </button>
           </div>
           <div className="space-y-4">
-            {MOCK_PREPRINTS.slice(0, 3).map((p, i) => (
+            {visibleTopicPapers.map((p, i) => (
               <div 
                 key={i} 
                 onClick={() => onPreprintClick(p)}
@@ -3972,14 +6895,10 @@ function TopicInsightScreen({ onBack, onPreprintClick, onTagClick, onAuthorClick
 
         <div className="pb-12">
           <h3 className="text-lg font-bold mb-6">Key Contributors</h3>
-          <div className="flex justify-between">
-            {[
-              { name: 'Yoshua Bengio', affiliation: 'U. Montreal', img: 'https://i.pravatar.cc/150?u=yoshua' },
-              { name: 'Fei-Fei Li', affiliation: 'Stanford', img: 'https://i.pravatar.cc/150?u=feifei' },
-              { name: 'Andrej Karpathy', affiliation: 'OpenAI', img: 'https://i.pravatar.cc/150?u=andrej' }
-            ].map((person, i) => (
+          <div className={`grid gap-4 ${showAllContributors ? 'grid-cols-2 md:grid-cols-3' : 'grid-cols-3'}`}>
+            {visibleContributors.map((person, i) => (
               <div key={i} onClick={() => onAuthorClick(person.name)} className="flex flex-col items-center text-center gap-2 cursor-pointer group">
-                <img src={person.img} alt="" className="size-16 rounded-full object-cover border-2 border-orange-200 p-0.5 group-hover:border-primary transition-all" />
+                <img src={person.imageUrl} alt="" className="size-16 rounded-full object-cover border-2 border-orange-200 p-0.5 group-hover:border-primary transition-all" />
                 <div>
                   <h4 className="text-xs font-bold leading-tight group-hover:text-primary transition-all">{person.name}</h4>
                   <p className="text-[10px] text-slate-400 font-medium">{person.affiliation}</p>
@@ -3987,19 +6906,76 @@ function TopicInsightScreen({ onBack, onPreprintClick, onTagClick, onAuthorClick
               </div>
             ))}
           </div>
+          <button onClick={() => setShowAllContributors((current) => !current)} className="mt-4 text-xs font-bold text-primary">
+            {showAllContributors ? 'Show fewer contributors' : 'View all contributors'}
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-function ShareScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
+function ShareScreen({ collection, currentUser, onBack, showToast }: { collection: Collection, currentUser: User, onBack: () => void, showToast: (msg: string) => void }) {
+  const { dataset, setDataset } = useAppData();
+  const [inviteEmail, setInviteEmail] = useState('');
+  const collectionRecord = dataset.collections.find((item) => item.id === collection.id) ?? collection;
+  const accessList = collectionRecord.sharedWith ?? [];
+
+  const updateCollectionAccess = (sharedWith: string[]) => {
+    setDataset((prev) => ({
+      ...prev,
+      collections: prev.collections.map((item) => item.id === collectionRecord.id ? {
+        ...item,
+        sharedWith,
+        shareLinkToken: item.shareLinkToken || item.id,
+        updatedAt: 'Just now',
+      } : item),
+      metadata: {
+        ...prev.metadata,
+        lastUpdated: new Date().toISOString(),
+      },
+    }));
+  };
+
+  const handleInvite = () => {
+    const normalized = inviteEmail.trim().toLowerCase();
+    if (!normalized || !normalized.includes('@')) {
+      showToast('Enter a valid email address');
+      return;
+    }
+    if (accessList.includes(normalized)) {
+      showToast('This collaborator already has access');
+      return;
+    }
+    updateCollectionAccess([...accessList, normalized]);
+    setInviteEmail('');
+    showToast('Invitation added to the access list');
+  };
+
+  const handleCopyLink = async () => {
+    try {
+      const token = collectionRecord.shareLinkToken || collectionRecord.id;
+      await copyText(`${window.location.origin}/collections/${token}`);
+      showToast('Link copied to clipboard!');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to copy link');
+    }
+  };
+
+  const handleRemoveAccess = (email: string) => {
+    updateCollectionAccess(accessList.filter((item) => item !== email));
+    showToast(`Removed ${email}`);
+  };
+
   return (
     <div className="flex flex-col h-full">
       <header className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between sticky top-0 bg-white dark:bg-background-dark z-10">
         <div className="flex items-center gap-4">
           <ArrowLeft className="cursor-pointer" onClick={onBack} />
-          <h2 className="text-lg font-bold">Share Collection</h2>
+          <div>
+            <h2 className="text-lg font-bold">Share Collection</h2>
+            <p className="text-xs text-slate-500">{collectionRecord.name}</p>
+          </div>
         </div>
         <button onClick={onBack} className="text-primary font-bold">Done</button>
       </header>
@@ -4007,9 +6983,15 @@ function ShareScreen({ onBack, showToast }: { onBack: () => void, showToast: (ms
         <section>
           <h3 className="font-bold mb-4">Invite collaborators</h3>
           <div className="flex gap-2">
-            <input type="text" placeholder="Enter email address" className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 text-sm" />
+            <input
+              type="email"
+              value={inviteEmail}
+              onChange={(event) => setInviteEmail(event.target.value)}
+              placeholder="Enter email address"
+              className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 text-sm"
+            />
             <button 
-              onClick={() => showToast('Invitation sent!')}
+              onClick={handleInvite}
               className="bg-primary text-white px-6 rounded-lg font-bold text-sm"
             >
               Invite
@@ -4025,7 +7007,7 @@ function ShareScreen({ onBack, showToast }: { onBack: () => void, showToast: (ms
             <p className="text-xs text-slate-500">Anyone with the link can view</p>
           </div>
           <button 
-            onClick={() => showToast('Link copied to clipboard!')}
+            onClick={() => void handleCopyLink()}
             className="bg-white dark:bg-slate-700 border border-slate-200 px-4 py-1.5 rounded-lg text-sm font-medium"
           >
             Copy
@@ -4036,24 +7018,35 @@ function ShareScreen({ onBack, showToast }: { onBack: () => void, showToast: (ms
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <img src="https://picsum.photos/seed/profile/100/100" className="size-10 rounded-full" alt="" />
+                <img src={currentUser.imageUrl} className="size-10 rounded-full object-cover" alt={currentUser.name} referrerPolicy="no-referrer" />
                 <div>
-                  <p className="text-sm font-bold">Dr. Aris Thorne (You)</p>
-                  <p className="text-xs text-slate-500">aris.thorne@university.edu</p>
+                  <p className="text-sm font-bold">{currentUser.name} (You)</p>
+                  <p className="text-xs text-slate-500">{currentUser.email || `${currentUser.id}@preprint-explorer.local`}</p>
                 </div>
               </div>
               <span className="text-xs font-bold text-slate-400 uppercase">Owner</span>
             </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="size-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">SJ</div>
-                <div>
-                  <p className="text-sm font-bold">Sarah Jenkins</p>
-                  <p className="text-xs text-slate-500">s.jenkins@lab.org</p>
+            {accessList.map((email) => (
+              <div key={email} className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
+                    {email.slice(0, 2).toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold">{email}</p>
+                    <p className="text-xs text-slate-500">Invited collaborator</p>
+                  </div>
                 </div>
+                <button onClick={() => handleRemoveAccess(email)} className="text-xs font-bold text-rose-500">
+                  Remove
+                </button>
               </div>
-              <span className="text-xs font-bold text-slate-400">Can Edit</span>
-            </div>
+            ))}
+            {accessList.length === 0 && (
+              <div className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500 dark:border-slate-800">
+                No collaborators have been added yet.
+              </div>
+            )}
           </div>
         </section>
       </div>
@@ -4061,33 +7054,370 @@ function ShareScreen({ onBack, showToast }: { onBack: () => void, showToast: (ms
   );
 }
 
-function SettingsScreen({ onBack, onNavigate, onLegal, showToast, onSignOut }: { onBack: () => void, onNavigate: (s: Screen) => void, onLegal: (type: 'tos' | 'privacy') => void, showToast: (msg: string) => void, onSignOut: () => void }) {
-  const [activeTab, setActiveTab] = useState<'notifications' | 'security'>('notifications');
-  const [settings, setSettings] = useState({
-    pushEnabled: true,
-    emailEnabled: true,
-    dailyDigest: true,
-    weeklyDigest: true,
-    newPublications: true,
-    citationAlerts: true,
-    productUpdates: false,
-    deliveryDay: 'Friday'
-  });
+function ModerationCenterScreen({
+  reports,
+  moderators,
+  reportActions,
+  onBack,
+  onOpenReport,
+  onAssignReport,
+  onEscalateReport,
+  onBulkAction,
+  onReviewReport,
+  showToast,
+}: {
+  reports: ModerationReport[];
+  moderators: Array<Pick<User, 'id' | 'name'>>;
+  reportActions: Record<string, ModerationAction[]>;
+  onBack: () => void;
+  onOpenReport: (reportId: string) => Promise<{ report: ModerationReport; actions: ModerationAction[] }>;
+  onAssignReport: (reportId: string, assignedToUserId: string | null) => Promise<void>;
+  onEscalateReport: (reportId: string, escalationReason: string) => Promise<void>;
+  onBulkAction: (payload: {
+    reportIds: string[];
+    action: 'assign' | 'review' | 'escalate';
+    assignedToUserId?: string | null;
+    status?: 'reviewing' | 'resolved' | 'dismissed';
+    resolutionNote?: string;
+    escalationReason?: string;
+  }) => Promise<void>;
+  onReviewReport: (reportId: string, payload: { status: 'reviewing' | 'resolved' | 'dismissed'; resolutionNote?: string }) => Promise<void>;
+  showToast: (msg: string, type?: 'success' | 'info') => void;
+}) {
+  const [activeFilter, setActiveFilter] = useState<'all' | 'open' | 'reviewing' | 'resolved' | 'dismissed'>('all');
+  const [selectedReport, setSelectedReport] = useState<ModerationReport | null>(null);
+  const [selectedReportActions, setSelectedReportActions] = useState<ModerationAction[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [resolutionNote, setResolutionNote] = useState('');
+  const [assignedToUserId, setAssignedToUserId] = useState<string>('');
+  const [escalationReason, setEscalationReason] = useState('');
+  const [bulkMode, setBulkMode] = useState<'off' | 'assign' | 'review' | 'escalate'>('off');
+  const [nextStatus, setNextStatus] = useState<'reviewing' | 'resolved' | 'dismissed'>('reviewing');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const toggleSetting = (key: keyof typeof settings) => {
-    setSettings(prev => {
-      const newValue = !prev[key];
-      const settingName = String(key).replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
-      showToast(`${settingName} ${newValue ? 'enabled' : 'disabled'}`);
-      return { ...prev, [key]: newValue };
-    });
+  const filteredReports = reports.filter((report) => activeFilter === 'all' || report.status === activeFilter);
+  const openCount = reports.filter((report) => report.status === 'open').length;
+
+  const openReviewModal = async (report: ModerationReport) => {
+    try {
+      const detail = await onOpenReport(report.id);
+      setSelectedReport(detail.report);
+      setSelectedReportActions(detail.actions);
+      setResolutionNote(detail.report.resolutionNote ?? '');
+      setAssignedToUserId(detail.report.assignedToUserId ?? '');
+      setEscalationReason(detail.report.escalationReason ?? '');
+      setNextStatus(detail.report.status === 'open' ? 'reviewing' : detail.report.status === 'reviewing' ? 'resolved' : 'dismissed');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to load report details', 'info');
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!selectedReport) {
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      if ((selectedReport.assignedToUserId ?? '') !== assignedToUserId) {
+        await onAssignReport(selectedReport.id, assignedToUserId || null);
+      }
+      if (escalationReason.trim() && escalationReason.trim() !== (selectedReport.escalationReason ?? '')) {
+        await onEscalateReport(selectedReport.id, escalationReason.trim());
+      }
+      await onReviewReport(selectedReport.id, {
+        status: nextStatus,
+        resolutionNote: resolutionNote.trim() || undefined,
+      });
+      showToast(`Report marked ${nextStatus}`);
+      setSelectedReport(null);
+      setSelectedReportActions([]);
+      setResolutionNote('');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to review report', 'info');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const toggleSelected = (reportId: string) => {
+    setSelectedIds((prev) => prev.includes(reportId) ? prev.filter((id) => id !== reportId) : [...prev, reportId]);
+  };
+
+  const handleBulkSubmit = async () => {
+    if (selectedIds.length === 0 || bulkMode === 'off') {
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      await onBulkAction({
+        reportIds: selectedIds,
+        action: bulkMode,
+        assignedToUserId: bulkMode === 'assign' ? (assignedToUserId || null) : undefined,
+        status: bulkMode === 'review' ? nextStatus : undefined,
+        resolutionNote: bulkMode === 'review' ? resolutionNote.trim() || undefined : undefined,
+        escalationReason: bulkMode === 'escalate' ? escalationReason.trim() || undefined : undefined,
+      });
+      showToast(`Bulk ${bulkMode} applied to ${selectedIds.length} reports`);
+      setSelectedIds([]);
+      setBulkMode('off');
+      setResolutionNote('');
+      setEscalationReason('');
+      setAssignedToUserId('');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to apply bulk moderation action', 'info');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950">
       <header className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center gap-4 sticky top-0 z-10">
         <ArrowLeft className="cursor-pointer" onClick={onBack} />
-        <h2 className="text-xl font-bold">Settings</h2>
+        <div>
+          <h2 className="text-xl font-bold">Moderation Center</h2>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{openCount} open reports</p>
+        </div>
+      </header>
+
+      <div className="border-b border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex gap-2 overflow-x-auto no-scrollbar">
+          {(['all', 'open', 'reviewing', 'resolved', 'dismissed'] as const).map((filter) => (
+            <button
+              key={filter}
+              onClick={() => setActiveFilter(filter)}
+              className={`rounded-full px-4 py-2 text-xs font-bold uppercase tracking-widest ${activeFilter === filter ? 'bg-primary text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}
+            >
+              {filter}
+            </button>
+          ))}
+        </div>
+        <div className="mt-3 rounded-2xl bg-slate-50 p-3 dark:bg-slate-950">
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => setBulkMode('assign')} className={`rounded-full px-3 py-2 text-[10px] font-bold uppercase tracking-widest ${bulkMode === 'assign' ? 'bg-primary text-white' : 'bg-white text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>Bulk Assign</button>
+            <button onClick={() => setBulkMode('review')} className={`rounded-full px-3 py-2 text-[10px] font-bold uppercase tracking-widest ${bulkMode === 'review' ? 'bg-primary text-white' : 'bg-white text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>Bulk Review</button>
+            <button onClick={() => setBulkMode('escalate')} className={`rounded-full px-3 py-2 text-[10px] font-bold uppercase tracking-widest ${bulkMode === 'escalate' ? 'bg-primary text-white' : 'bg-white text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>Bulk Escalate</button>
+            <button onClick={() => setBulkMode('off')} className="rounded-full px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">Clear</button>
+          </div>
+          {bulkMode !== 'off' && (
+            <div className="mt-3 space-y-3">
+              {bulkMode === 'assign' && (
+                <select value={assignedToUserId} onChange={(event) => setAssignedToUserId(event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm dark:border-slate-700 dark:bg-slate-900">
+                  <option value="">Unassigned</option>
+                  {moderators.map((moderator) => <option key={moderator.id} value={moderator.id}>{moderator.name}</option>)}
+                </select>
+              )}
+              {bulkMode === 'review' && (
+                <>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(['reviewing', 'resolved', 'dismissed'] as const).map((status) => (
+                      <button key={status} onClick={() => setNextStatus(status)} className={`rounded-2xl border px-3 py-3 text-sm font-bold ${nextStatus === status ? 'border-primary bg-primary/10 text-primary' : 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300'}`}>{status}</button>
+                    ))}
+                  </div>
+                  <textarea value={resolutionNote} onChange={(event) => setResolutionNote(event.target.value)} placeholder="Optional shared resolution note" className="min-h-[100px] w-full rounded-2xl border border-slate-200 bg-white p-4 text-sm dark:border-slate-700 dark:bg-slate-900" />
+                </>
+              )}
+              {bulkMode === 'escalate' && (
+                <textarea value={escalationReason} onChange={(event) => setEscalationReason(event.target.value)} placeholder="Why this set of reports needs escalation" className="min-h-[100px] w-full rounded-2xl border border-slate-200 bg-white p-4 text-sm dark:border-slate-700 dark:bg-slate-900" />
+              )}
+              <button onClick={() => void handleBulkSubmit()} disabled={isSubmitting || selectedIds.length === 0} className="w-full rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 disabled:opacity-60">
+                {isSubmitting ? 'Applying…' : `Apply to ${selectedIds.length} selected`}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar">
+        {filteredReports.length === 0 ? (
+          <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">
+            <ShieldCheck className="mx-auto mb-3 size-10 text-emerald-500" />
+            <h3 className="text-lg font-bold">No reports in this queue</h3>
+            <p className="mt-2 text-sm text-slate-500">The moderation queue is currently clear for this filter.</p>
+          </div>
+        ) : filteredReports.map((report) => (
+          <div key={report.id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <input type="checkbox" checked={selectedIds.includes(report.id)} onChange={() => toggleSelected(report.id)} className="mt-1 size-4 rounded border-slate-300 text-primary focus:ring-primary" />
+                <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{report.targetType} report</p>
+                <h3 className="mt-1 text-base font-bold text-slate-900 dark:text-slate-100">{report.reason}</h3>
+                <p className="mt-1 text-sm text-slate-500">Reporter: {report.reporterName}</p>
+                </div>
+              </div>
+              <span className={`rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest ${report.status === 'open' ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300' : report.status === 'reviewing' ? 'bg-blue-100 text-blue-800 dark:bg-blue-500/10 dark:text-blue-300' : report.status === 'resolved' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300' : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'}`}>
+                {report.status}
+              </span>
+            </div>
+            <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm dark:bg-slate-950">
+              <p><span className="font-bold">Target:</span> {report.targetType} / {report.targetId}</p>
+              <p className="mt-2"><span className="font-bold">Submitted:</span> {new Date(report.createdAt).toLocaleString()}</p>
+              {report.assigneeName && <p className="mt-2"><span className="font-bold">Assignee:</span> {report.assigneeName}</p>}
+              {report.escalatedAt && <p className="mt-2"><span className="font-bold text-amber-700 dark:text-amber-300">Escalated:</span> {new Date(report.escalatedAt).toLocaleString()}</p>}
+              {report.details && <p className="mt-3 text-slate-600 dark:text-slate-300">{report.details}</p>}
+              {report.resolutionNote && <p className="mt-3 text-slate-600 dark:text-slate-300"><span className="font-bold">Resolution:</span> {report.resolutionNote}</p>}
+              {report.escalationReason && <p className="mt-3 text-slate-600 dark:text-slate-300"><span className="font-bold">Escalation:</span> {report.escalationReason}</p>}
+              {report.reviewerName && <p className="mt-2 text-xs uppercase tracking-widest text-slate-400">Last reviewed by {report.reviewerName}</p>}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => openReviewModal(report)}
+                className="rounded-2xl bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-primary/20"
+              >
+                Review Report
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <AnimatePresence>
+        {selectedReport && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-[180] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 16, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 16, scale: 0.98 }}
+              className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl dark:bg-slate-900"
+            >
+              <div className="mb-5 flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-bold">Review Moderation Report</h3>
+                  <p className="mt-1 text-sm text-slate-500">Update the queue status and leave an optional resolution note.</p>
+                </div>
+                <button onClick={() => setSelectedReport(null)} className="rounded-full p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+                  <X className="size-5" />
+                </button>
+              </div>
+
+              <div className="mb-4 space-y-2">
+                <label className="text-xs font-bold uppercase tracking-widest text-slate-400">Assignee</label>
+                <select
+                  value={assignedToUserId}
+                  onChange={(event) => setAssignedToUserId(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-slate-950"
+                >
+                  <option value="">Unassigned</option>
+                  {moderators.map((moderator) => (
+                    <option key={moderator.id} value={moderator.id}>{moderator.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedReport.evidence && selectedReport.evidence.length > 0 && (
+                <div className="mb-4 rounded-2xl bg-slate-50 p-4 text-sm dark:bg-slate-950">
+                  <p className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-400">Evidence</p>
+                  <div className="space-y-2">
+                    {selectedReport.evidence.map((item) => (
+                      <div key={`${item.label}-${item.value}`}>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{item.label}</p>
+                        <p className="mt-1 text-slate-700 dark:text-slate-200">{item.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="mb-4 grid grid-cols-3 gap-2">
+                {(['reviewing', 'resolved', 'dismissed'] as const).map((status) => (
+                  <button
+                    key={status}
+                    onClick={() => setNextStatus(status)}
+                    className={`rounded-2xl border px-3 py-3 text-sm font-bold ${nextStatus === status ? 'border-primary bg-primary/10 text-primary' : 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300'}`}
+                  >
+                    {status}
+                  </button>
+                ))}
+              </div>
+
+              <textarea
+                value={resolutionNote}
+                onChange={(event) => setResolutionNote(event.target.value)}
+                placeholder="Leave context for the reporter or your moderation team."
+                className="min-h-[160px] w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-slate-950"
+              />
+
+              <div className="mt-4 space-y-2">
+                <label className="text-xs font-bold uppercase tracking-widest text-slate-400">Escalation Reason</label>
+                <textarea
+                  value={escalationReason}
+                  onChange={(event) => setEscalationReason(event.target.value)}
+                  placeholder="Escalate this report to a higher-priority or external review queue."
+                  className="min-h-[100px] w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-slate-950"
+                />
+              </div>
+
+              <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm dark:bg-slate-950">
+                <p className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-400">Action History</p>
+                <div className="space-y-3">
+                  {selectedReportActions.map((action) => (
+                    <div key={action.id} className="border-l-2 border-primary/20 pl-3">
+                      <p className="text-sm font-bold text-slate-800 dark:text-slate-100">{action.actionType} by {action.actorName}</p>
+                      <p className="text-[11px] uppercase tracking-widest text-slate-400">{new Date(action.createdAt).toLocaleString()}</p>
+                      {action.actionNote && <p className="mt-1 text-slate-600 dark:text-slate-300">{action.actionNote}</p>}
+                    </div>
+                  ))}
+                  {selectedReportActions.length === 0 && (
+                    <p className="text-slate-500">No recorded actions yet.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-5 flex gap-3">
+                <button type="button" onClick={() => { setSelectedReport(null); setSelectedReportActions([]); }} className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold dark:border-slate-700">
+                  Cancel
+                </button>
+                <button type="button" onClick={() => void handleSubmit()} disabled={isSubmitting} className="flex-1 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 disabled:opacity-70">
+                  {isSubmitting ? 'Saving…' : 'Save Review'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function SettingsScreen({ settings, canModerate, onUpdateSetting, onBack, onOpenMenu, onNavigate, onLegal, showToast, onSignOut }: { settings: UserSettings, canModerate: boolean, onUpdateSetting: (key: keyof UserSettings, value: boolean | string) => Promise<UserSettings>, onBack: () => void, onOpenMenu: () => void, onNavigate: (s: Screen) => void, onLegal: (type: 'tos' | 'privacy') => void, showToast: (msg: string) => void, onSignOut: () => void }) {
+  const [activeTab, setActiveTab] = useState<'notifications' | 'security' | 'data'>('notifications');
+  const [isUpdatingDay, setIsUpdatingDay] = useState(false);
+  const toggleSetting = async (key: keyof UserSettings) => {
+    const nextValue = !settings[key] as boolean;
+    await onUpdateSetting(key, nextValue);
+    const settingName = String(key).replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+    showToast(`${settingName} ${nextValue ? 'enabled' : 'disabled'}`);
+  };
+
+  const cycleDeliveryDay = async () => {
+    const deliveryDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const currentIndex = deliveryDays.indexOf(settings.deliveryDay);
+    const nextDay = deliveryDays[(currentIndex + 1) % deliveryDays.length];
+    try {
+      setIsUpdatingDay(true);
+      await onUpdateSetting('deliveryDay', nextDay);
+      showToast(`Weekly digest day set to ${nextDay}`);
+    } finally {
+      setIsUpdatingDay(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950">
+      <header className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4 sticky top-0 z-10">
+        <div className="flex items-center gap-4">
+          <ArrowLeft className="cursor-pointer" onClick={onBack} />
+          <h2 className="text-xl font-bold">Settings</h2>
+        </div>
+        <button type="button" onClick={onOpenMenu} className="rounded-full p-2 text-primary hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Open menu">
+          <Menu className="size-5" />
+        </button>
       </header>
 
       <div className="flex bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
@@ -4102,6 +7432,12 @@ function SettingsScreen({ onBack, onNavigate, onLegal, showToast, onSignOut }: {
           className={`flex-1 py-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'security' ? 'border-primary text-primary' : 'border-transparent text-slate-500'}`}
         >
           Security
+        </button>
+        <button 
+          onClick={() => setActiveTab('data')}
+          className={`flex-1 py-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'data' ? 'border-primary text-primary' : 'border-transparent text-slate-500'}`}
+        >
+          Data
         </button>
       </div>
 
@@ -4167,13 +7503,13 @@ function SettingsScreen({ onBack, onNavigate, onLegal, showToast, onSignOut }: {
                 </div>
                 {settings.weeklyDigest && (
                   <div className="px-4 pb-4">
-                    <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4 flex items-center justify-between">
+                    <button type="button" onClick={() => void cycleDeliveryDay()} disabled={isUpdatingDay} className="w-full bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4 flex items-center justify-between disabled:opacity-60">
                       <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Delivery day</span>
-                      <div className="flex items-center gap-2 text-primary font-bold text-sm cursor-pointer">
-                        {settings.deliveryDay}
+                      <div className="flex items-center gap-2 text-primary font-bold text-sm">
+                        {isUpdatingDay ? 'Updating…' : settings.deliveryDay}
                         <ChevronRight className="size-4 rotate-90" />
                       </div>
-                    </div>
+                    </button>
                   </div>
                 )}
               </div>
@@ -4221,7 +7557,7 @@ function SettingsScreen({ onBack, onNavigate, onLegal, showToast, onSignOut }: {
               </p>
             </div>
           </>
-        ) : (
+        ) : activeTab === 'security' ? (
           <>
             <section className="mb-6">
               <div className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">
@@ -4242,6 +7578,12 @@ function SettingsScreen({ onBack, onNavigate, onLegal, showToast, onSignOut }: {
                 />
                 <SecurityOption 
                   icon={<Key className="size-5" />}
+                  title="Passkeys"
+                  description="Register biometric or hardware-backed sign-in credentials"
+                  onClick={() => onNavigate('passkeys')}
+                />
+                <SecurityOption 
+                  icon={<Key className="size-5" />}
                   title="Encryption Keys"
                   description="Manage your end-to-end encryption keys"
                   onClick={() => onNavigate('encryption-keys')}
@@ -4257,8 +7599,17 @@ function SettingsScreen({ onBack, onNavigate, onLegal, showToast, onSignOut }: {
                   title="Recent Activity"
                   description="Review recent logins and security events"
                   onClick={() => onNavigate('security-log')}
-                  showDivider={false}
+                  showDivider={!canModerate}
                 />
+                {canModerate && (
+                  <SecurityOption
+                    icon={<ShieldCheck className="size-5" />}
+                    title="Moderation Center"
+                    description="Review reports and close the moderation queue"
+                    onClick={() => onNavigate('moderation-center')}
+                    showDivider={false}
+                  />
+                )}
               </div>
             </section>
 
@@ -4279,6 +7630,47 @@ function SettingsScreen({ onBack, onNavigate, onLegal, showToast, onSignOut }: {
                   description="Get in touch with our support team"
                   onClick={() => onNavigate('contact')}
                   showDivider={false}
+                />
+              </div>
+            </section>
+
+            <section className="mb-6">
+              <div className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                Privacy & Access
+              </div>
+              <div className="bg-white dark:bg-slate-900 border-y border-slate-200 dark:border-slate-800 p-4 space-y-4">
+                <PrivacySetting
+                  label="Profile visibility"
+                  description="Control who appears in people discovery and profile views."
+                  value={settings.profileVisibility}
+                  onChange={(value) => onUpdateSetting('profileVisibility', value)}
+                  options={[
+                    { value: 'public', label: 'Public' },
+                    { value: 'followers', label: 'Followers only' },
+                    { value: 'private', label: 'Private' },
+                  ]}
+                />
+                <PrivacySetting
+                  label="Direct messages"
+                  description="Choose who can open a new direct conversation with you."
+                  value={settings.messagePrivacy}
+                  onChange={(value) => onUpdateSetting('messagePrivacy', value)}
+                  options={[
+                    { value: 'everyone', label: 'Everyone' },
+                    { value: 'followers', label: 'Followers only' },
+                    { value: 'nobody', label: 'Nobody' },
+                  ]}
+                />
+                <PrivacySetting
+                  label="Paper shares"
+                  description="Choose who can send papers directly into your inbox."
+                  value={settings.sharePrivacy}
+                  onChange={(value) => onUpdateSetting('sharePrivacy', value)}
+                  options={[
+                    { value: 'everyone', label: 'Everyone' },
+                    { value: 'followers', label: 'Followers only' },
+                    { value: 'nobody', label: 'Nobody' },
+                  ]}
                 />
               </div>
             </section>
@@ -4308,8 +7700,354 @@ function SettingsScreen({ onBack, onNavigate, onLegal, showToast, onSignOut }: {
               </div>
             </div>
           </>
+        ) : (
+          <DataManagementPanel showToast={showToast} />
         )}
       </div>
+    </div>
+  );
+}
+
+function DataManagementPanel({ showToast }: { showToast: (msg: string, type?: 'success' | 'info') => void }) {
+  const { dataset, importDataset, exportDataset, resetToSeed } = useAppData();
+  const [importText, setImportText] = useState('');
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [backendQuery, setBackendQuery] = useState('quantum computing');
+  const [isSyncingBackend, setIsSyncingBackend] = useState(false);
+  const [contentSources, setContentSources] = useState<ContentSource[]>([]);
+  const [selectedSourceId, setSelectedSourceId] = useState('arxiv');
+  const [maxResults, setMaxResults] = useState(15);
+  const [syncIntervalMinutes, setSyncIntervalMinutes] = useState(1440);
+  const [syncDefinitions, setSyncDefinitions] = useState<ContentSyncDefinition[]>([]);
+
+  const refreshSyncDefinitions = () => {
+    fetchContentSyncDefinitions()
+      .then((response) => setSyncDefinitions(response.syncDefinitions))
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    fetchContentSources()
+      .then((response) => {
+        setContentSources(response.sources);
+        if (response.sources.length > 0 && !response.sources.some((source) => source.id === selectedSourceId)) {
+          setSelectedSourceId(response.sources[0].id);
+        }
+      })
+      .catch(() => {});
+    refreshSyncDefinitions();
+  }, []);
+
+  const handleImport = () => {
+    try {
+      const result = importDataset(importText);
+      setWarnings(result.warnings);
+      showToast('Dataset imported successfully');
+      setImportText('');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Import failed';
+      showToast(message, 'info');
+    }
+  };
+
+  const handleExport = async () => {
+    const payload = exportDataset();
+    await navigator.clipboard.writeText(payload);
+    showToast('Dataset JSON copied to clipboard');
+  };
+
+  const handleReset = () => {
+    resetToSeed();
+    setWarnings([]);
+    setImportText('');
+    showToast('Restored seed dataset');
+  };
+
+  const handleLoadBackendCatalog = async () => {
+    try {
+      setIsSyncingBackend(true);
+      const payload = await fetchBackendPreprints();
+      const result = importDataset(JSON.stringify(payload));
+      setWarnings(result.warnings);
+      showToast(`Loaded ${payload.preprints.length} papers from the backend catalog`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to load backend catalog', 'info');
+    } finally {
+      setIsSyncingBackend(false);
+    }
+  };
+
+  const handleSourceSync = async () => {
+    try {
+      setIsSyncingBackend(true);
+      const payload = await ingestContentSource(selectedSourceId, backendQuery, maxResults);
+      const result = importDataset(JSON.stringify(payload.dataset));
+      setWarnings(result.warnings);
+      const sourceLabel = contentSources.find((source) => source.id === selectedSourceId)?.label ?? selectedSourceId;
+      showToast(`Imported ${payload.imported} ${sourceLabel} records`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to ingest backend content', 'info');
+    } finally {
+      setIsSyncingBackend(false);
+    }
+  };
+
+  const handleSaveSyncDefinition = async () => {
+    try {
+      const response = await saveContentSyncDefinition({
+        sourceId: selectedSourceId,
+        query: backendQuery,
+        maxResults,
+        intervalMinutes: syncIntervalMinutes,
+        enabled: true,
+      });
+      setSyncDefinitions((prev) => [response.syncDefinition, ...prev.filter((item) => item.id !== response.syncDefinition.id)]);
+      showToast(`Saved recurring sync for ${response.syncDefinition.sourceLabel}`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to save recurring sync', 'info');
+    }
+  };
+
+  const handleToggleSyncDefinition = async (definition: ContentSyncDefinition) => {
+    try {
+      const response = await saveContentSyncDefinition({
+        id: definition.id,
+        sourceId: definition.sourceId,
+        query: definition.query,
+        maxResults: definition.maxResults,
+        intervalMinutes: definition.intervalMinutes,
+        enabled: !definition.enabled,
+      });
+      setSyncDefinitions((prev) => [response.syncDefinition, ...prev.filter((item) => item.id !== response.syncDefinition.id)]);
+      showToast(response.syncDefinition.enabled ? 'Recurring sync resumed' : 'Recurring sync paused');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to update recurring sync', 'info');
+    }
+  };
+
+  const handleDeleteSyncDefinition = async (definitionId: string) => {
+    try {
+      await deleteContentSyncDefinition(definitionId);
+      setSyncDefinitions((prev) => prev.filter((item) => item.id !== definitionId));
+      showToast('Removed recurring sync');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to remove recurring sync', 'info');
+    }
+  };
+
+  return (
+    <div className="p-4 space-y-6">
+      <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm">
+        <div className="flex items-start justify-between gap-4 mb-5">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Current Dataset</p>
+            <h3 className="text-xl font-bold">{dataset.metadata.sourceLabel}</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              {dataset.metadata.isImported ? 'Imported dataset' : 'Seed dataset'} • Updated {new Date(dataset.metadata.lastUpdated).toLocaleString()}
+            </p>
+          </div>
+          <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${dataset.metadata.isImported ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
+            {dataset.metadata.isImported ? 'Live Input Ready' : 'Demo Seed'}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <DataStatCard label="Papers" value={dataset.preprints.length.toLocaleString()} />
+          <DataStatCard label="Researchers" value={dataset.users.length.toLocaleString()} />
+          <DataStatCard label="Institutions" value={dataset.institutions.length.toLocaleString()} />
+          <DataStatCard label="Feeds" value={dataset.customFeeds.length.toLocaleString()} />
+        </div>
+      </section>
+
+      <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm">
+        <div className="flex items-center gap-2 mb-3">
+          <Globe className="size-5 text-primary" />
+          <h3 className="text-lg font-bold">Backend Sync</h3>
+        </div>
+        <p className="text-xs text-slate-500 leading-relaxed mb-4">
+          Pull the persisted backend catalog or ingest fresh papers from live sources. The backend now normalizes raw source records into a deduplicated catalog before the app loads them.
+        </p>
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <select
+              value={selectedSourceId}
+              onChange={(e) => setSelectedSourceId(e.target.value)}
+              className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+            >
+              {contentSources.map((source) => (
+                <option key={source.id} value={source.id}>{source.label}</option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min={1}
+              max={50}
+              value={maxResults}
+              onChange={(e) => setMaxResults(Math.max(1, Math.min(50, Number(e.target.value) || 15)))}
+              className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+            />
+            <input
+              type="number"
+              min={15}
+              max={10080}
+              value={syncIntervalMinutes}
+              onChange={(e) => setSyncIntervalMinutes(Math.max(15, Math.min(10080, Number(e.target.value) || 1440)))}
+              className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+            />
+          </div>
+          <input
+            type="text"
+            value={backendQuery}
+            onChange={(e) => setBackendQuery(e.target.value)}
+            placeholder="Search query for the selected source"
+            className="w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+          />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <button
+              onClick={handleSourceSync}
+              disabled={!backendQuery.trim() || isSyncingBackend}
+              className="flex-1 bg-primary text-white py-3 rounded-xl font-bold disabled:opacity-50"
+            >
+              {isSyncingBackend ? 'Syncing…' : 'Ingest Selected Source'}
+            </button>
+            <button
+              onClick={handleSaveSyncDefinition}
+              disabled={!backendQuery.trim() || isSyncingBackend}
+              className="flex-1 bg-slate-900 text-white dark:bg-slate-700 py-3 rounded-xl font-bold disabled:opacity-50"
+            >
+              Save Recurring Sync
+            </button>
+            <button
+              onClick={handleLoadBackendCatalog}
+              disabled={isSyncingBackend}
+              className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 py-3 rounded-xl font-bold disabled:opacity-50"
+            >
+              Load Backend Catalog
+            </button>
+          </div>
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-4">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">Available Sources</p>
+            <div className="space-y-2">
+              {contentSources.map((source) => (
+                <div key={source.id} className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{source.label}</p>
+                    <p className="text-xs text-slate-500">{source.description}</p>
+                  </div>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{source.id}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          {syncDefinitions.length > 0 && (
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-4">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">Recurring Syncs</p>
+              <div className="space-y-3">
+                {syncDefinitions.map((definition) => (
+                  <div key={definition.id} className="flex items-start justify-between gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{definition.sourceLabel}</p>
+                        <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-widest ${definition.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300' : 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300'}`}>
+                          {definition.enabled ? 'Enabled' : 'Paused'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500">Query: {definition.query}</p>
+                      <p className="text-xs text-slate-500">
+                        Every {definition.intervalMinutes} min • max {definition.maxResults} • next {definition.enabled ? (definition.nextRunAt ? new Date(definition.nextRunAt).toLocaleString() : 'not scheduled') : 'paused'}
+                      </p>
+                      {definition.lastStatus && (
+                        <p className="text-xs text-slate-500">
+                          Last run: {definition.lastStatus} {definition.lastRunAt ? `at ${new Date(definition.lastRunAt).toLocaleString()}` : ''}
+                        </p>
+                      )}
+                      {definition.lastError && <p className="text-xs text-red-500">{definition.lastError}</p>}
+                    </div>
+                    <div className="flex flex-col items-end gap-2">
+                      <button
+                        onClick={() => void handleToggleSyncDefinition(definition)}
+                        className="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-500"
+                      >
+                        {definition.enabled ? 'Pause' : 'Resume'}
+                      </button>
+                      <button
+                        onClick={() => handleDeleteSyncDefinition(definition.id)}
+                        className="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-500"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm">
+        <div className="flex items-center gap-2 mb-3">
+          <Database className="size-5 text-primary" />
+          <h3 className="text-lg font-bold">Import JSON</h3>
+        </div>
+        <p className="text-xs text-slate-500 leading-relaxed mb-4">
+          Paste a JSON object with a `preprints` or `papers` array. Optional arrays such as `users`, `institutions`, `collections`, `notifications`, and `customFeeds` will be used when present.
+        </p>
+        <textarea
+          value={importText}
+          onChange={(e) => setImportText(e.target.value)}
+          placeholder={`{\n  "sourceLabel": "Lab export",\n  "preprints": [\n    {\n      "id": "paper-1",\n      "title": "Example title",\n      "authors": ["Ada Lovelace"],\n      "publishedAt": "2026-03-15",\n      "source": "arXiv",\n      "tags": ["AI"],\n      "abstract": "Summary..."\n    }\n  ]\n}`}
+          className="w-full min-h-[240px] rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-4 text-xs font-mono outline-none focus:ring-2 focus:ring-primary/40"
+        />
+        <div className="flex gap-3 mt-4">
+          <button
+            onClick={handleImport}
+            disabled={!importText.trim()}
+            className="flex-1 bg-primary text-white py-3 rounded-xl font-bold disabled:opacity-50"
+          >
+            Import Dataset
+          </button>
+          <button
+            onClick={handleExport}
+            className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 py-3 rounded-xl font-bold"
+          >
+            Copy Current JSON
+          </button>
+        </div>
+        {warnings.length > 0 && (
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/10 p-4 space-y-2">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700 dark:text-amber-300">Import Notes</p>
+            {warnings.map(warning => (
+              <p key={warning} className="text-xs text-amber-700 dark:text-amber-300">{warning}</p>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm">
+        <div className="flex items-center gap-2 mb-3">
+          <Shield className="size-5 text-primary" />
+          <h3 className="text-lg font-bold">Reset & Fallback</h3>
+        </div>
+        <p className="text-xs text-slate-500 leading-relaxed mb-4">
+          Resetting restores the bundled seed dataset. Your imported JSON is removed, but local saved-paper bookmarks remain intact.
+        </p>
+        <button
+          onClick={handleReset}
+          className="w-full py-3 rounded-xl border border-red-200 bg-red-50 text-red-600 font-bold dark:border-red-900/30 dark:bg-red-900/10 dark:text-red-300"
+        >
+          Restore Seed Dataset
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function DataStatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 p-4">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</p>
+      <p className="text-2xl font-bold mt-2">{value}</p>
     </div>
   );
 }
@@ -4336,6 +8074,42 @@ function SettingItem({ title, description, active, onToggle, showDivider = true 
         </div>
       </div>
       {showDivider && <div className="absolute bottom-0 left-4 right-0 h-px bg-slate-100 dark:bg-slate-800"></div>}
+    </div>
+  );
+}
+
+function PrivacySetting({
+  label,
+  description,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  description: string;
+  value: string;
+  onChange: (value: string) => Promise<unknown>;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100">{label}</h4>
+          <p className="text-xs text-slate-500 mt-1 max-w-md">{description}</p>
+        </div>
+        <select
+          value={value}
+          onChange={(event) => { void onChange(event.target.value); }}
+          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-primary/40"
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
     </div>
   );
 }
@@ -4369,14 +8143,34 @@ function SecurityOption({ icon, title, description, onClick, showDivider = true 
   );
 }
 
-function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
+function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string, type?: 'success' | 'info') => void }) {
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleUpdate = () => {
-    showToast('Password updated successfully!');
-    onBack();
+  const handleUpdate = async () => {
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      showToast('All password fields are required', 'info');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      showToast('New password confirmation does not match', 'info');
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      await changePassword(currentPassword, newPassword);
+      showToast('Password updated successfully!');
+      onBack();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to update password', 'info');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -4401,6 +8195,8 @@ function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showT
               <input 
                 type={showCurrent ? "text" : "password"}
                 placeholder="Enter current password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
                 className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 pr-12 text-sm outline-none focus:border-primary transition-colors"
               />
               <button 
@@ -4419,6 +8215,8 @@ function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showT
               <input 
                 type={showNew ? "text" : "password"}
                 placeholder="Enter new password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
                 className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 pr-12 text-sm outline-none focus:border-primary transition-colors"
               />
               <button 
@@ -4436,6 +8234,8 @@ function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showT
               <input 
                 type={showConfirm ? "text" : "password"}
                 placeholder="Confirm new password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
                 className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 pr-12 text-sm outline-none focus:border-primary transition-colors"
               />
               <button 
@@ -4451,9 +8251,10 @@ function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showT
         <div className="mt-10 space-y-3">
           <button 
             onClick={handleUpdate}
+            disabled={isSubmitting}
             className="w-full bg-primary text-white py-4 rounded-xl font-bold shadow-lg shadow-primary/20"
           >
-            Update Password
+            {isSubmitting ? 'Updating…' : 'Update Password'}
           </button>
           <button onClick={onBack} className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 py-4 rounded-xl font-bold">Cancel</button>
         </div>
@@ -4469,13 +8270,62 @@ function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showT
   );
 }
 
-function TwoFactorAuthScreen({ onBack, onNext, showToast }: { onBack: () => void, onNext: () => void, showToast: (msg: string) => void }) {
-  const [step, setStep] = useState<'intro' | 'setup'>('intro');
+function TwoFactorAuthScreen({ currentUser, onBack, onNext, onEnable, onDisable, showToast }: { currentUser: User, onBack: () => void, onNext: () => void, onEnable: (code: string) => Promise<string[]>, onDisable: (code: string) => Promise<void>, showToast: (msg: string, type?: 'success' | 'info') => void }) {
+  const [step, setStep] = useState<'intro' | 'setup'>(currentUser.hasTwoFactorEnabled ? 'setup' : 'intro');
+  const [setupPayload, setSetupPayload] = useState<{ secret: string; qrCodeDataUrl: string } | null>(null);
+  const [showSecret, setShowSecret] = useState(false);
+  const [verificationCode, setVerificationCode] = useState('');
+  const [disableCode, setDisableCode] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleVerify = () => {
-    showToast('2FA code verified!');
-    onNext();
+  const beginSetup = async () => {
+    try {
+      setIsSubmitting(true);
+      const payload = await startTwoFactorSetup();
+      setSetupPayload({ secret: payload.secret, qrCodeDataUrl: payload.qrCodeDataUrl });
+      setStep('setup');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to start 2FA setup', 'info');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+
+  const handleVerify = async () => {
+    if (!verificationCode.trim()) {
+      showToast('Enter the authenticator code', 'info');
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      await onEnable(verificationCode);
+      showToast('2FA enabled successfully');
+      onNext();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to enable 2FA', 'info');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDisable = async () => {
+    if (!disableCode.trim()) {
+      showToast('Enter a current authenticator or backup code', 'info');
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      await onDisable(disableCode);
+      showToast('2FA disabled');
+      onBack();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to disable 2FA', 'info');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const disableWarning = currentUser.hasTwoFactorEnabled && !currentUser.isEmailVerified;
 
   if (step === 'intro') {
     return (
@@ -4533,9 +8383,45 @@ function TwoFactorAuthScreen({ onBack, onNext, showToast }: { onBack: () => void
           </div>
 
           <div className="mt-auto space-y-3">
-            <button onClick={() => setStep('setup')} className="w-full bg-primary text-white py-4 rounded-xl font-bold shadow-lg shadow-primary/20">Get Started</button>
+            <button onClick={beginSetup} disabled={isSubmitting} className="w-full bg-primary text-white py-4 rounded-xl font-bold shadow-lg shadow-primary/20">{isSubmitting ? 'Preparing…' : 'Get Started'}</button>
             <button onClick={onBack} className="w-full py-4 rounded-xl font-bold text-slate-500">Not Now</button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (currentUser.hasTwoFactorEnabled) {
+    return (
+      <div className="flex flex-col h-full bg-white dark:bg-slate-950">
+        <header className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center gap-4 sticky top-0 z-10 bg-white dark:bg-slate-900">
+          <ArrowLeft className="cursor-pointer" onClick={onBack} />
+          <h2 className="text-xl font-bold">Two-Factor Authentication</h2>
+        </header>
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-6 text-center dark:border-emerald-900/30 dark:bg-emerald-900/10">
+            <ShieldCheck className="mx-auto mb-3 size-10 text-emerald-600" />
+            <h3 className="text-xl font-bold">2FA Enabled</h3>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Your account requires an authenticator code or a backup code at sign-in.</p>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-bold">Disable 2FA</label>
+            <input
+              type="text"
+              value={disableCode}
+              onChange={(e) => setDisableCode(e.target.value)}
+              placeholder="Current authenticator or backup code"
+              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 text-sm outline-none focus:border-primary transition-colors"
+            />
+          </div>
+          {disableWarning && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-700 dark:border-amber-900/30 dark:bg-amber-900/10 dark:text-amber-300">
+              Your email is not verified. If you disable 2FA without another recovery method, you can lock yourself out of this account.
+            </div>
+          )}
+          <button onClick={handleDisable} disabled={isSubmitting} className="w-full bg-red-600 text-white py-4 rounded-xl font-bold">
+            {isSubmitting ? 'Updating…' : 'Disable Two-Factor Authentication'}
+          </button>
         </div>
       </div>
     );
@@ -4561,9 +8447,13 @@ function TwoFactorAuthScreen({ onBack, onNext, showToast }: { onBack: () => void
 
         <div className="bg-slate-50 dark:bg-slate-900 rounded-3xl p-8 flex flex-col items-center mb-6 border border-slate-100 dark:border-slate-800">
           <div className="bg-white p-4 rounded-2xl shadow-sm mb-6">
-            <div className="size-48 bg-slate-100 flex items-center justify-center">
-              <QrCode className="size-32 text-slate-800" />
-            </div>
+            {setupPayload ? (
+              <img src={setupPayload.qrCodeDataUrl} alt="2FA QR Code" className="size-48 rounded-xl" />
+            ) : (
+              <div className="size-48 bg-slate-100 flex items-center justify-center">
+                <QrCode className="size-32 text-slate-800" />
+              </div>
+            )}
           </div>
           
           <div className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4">
@@ -4571,25 +8461,24 @@ function TwoFactorAuthScreen({ onBack, onNext, showToast }: { onBack: () => void
               <h4 className="text-sm font-bold">Can't scan the code?</h4>
             </div>
             <p className="text-xs text-slate-500 mb-3">Enter the secret key manually.</p>
-            <button className="text-primary text-xs font-bold flex items-center gap-1">
-              View Secret Key <ChevronRight className="size-3" />
+            <button onClick={() => setShowSecret(value => !value)} className="text-primary text-xs font-bold flex items-center gap-1">
+              {showSecret ? 'Hide Secret Key' : 'View Secret Key'} <ChevronRight className={`size-3 transition-transform ${showSecret ? 'rotate-90' : ''}`} />
             </button>
+            {showSecret && setupPayload && (
+              <p className="mt-3 break-all rounded-xl bg-slate-50 p-3 font-mono text-xs">{setupPayload.secret}</p>
+            )}
           </div>
         </div>
 
         <div className="space-y-4">
           <label className="text-sm font-bold block">Verification Code</label>
-          <div className="flex justify-between gap-2">
-            {[0,0,0,0,0,0].map((_, i) => (
-              <input 
-                key={i}
-                type="text"
-                maxLength={1}
-                placeholder="0"
-                className="size-12 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-center text-xl font-bold outline-none focus:border-primary transition-colors"
-              />
-            ))}
-          </div>
+          <input
+            type="text"
+            value={verificationCode}
+            onChange={(e) => setVerificationCode(e.target.value)}
+            placeholder="123456"
+            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 text-center text-xl font-bold tracking-[0.4em] outline-none focus:border-primary transition-colors"
+          />
           <p className="text-center text-xs text-slate-400 mt-2">Enter the 6-digit code from your app</p>
         </div>
 
@@ -4600,7 +8489,7 @@ function TwoFactorAuthScreen({ onBack, onNext, showToast }: { onBack: () => void
           <span className="text-sm text-slate-600 dark:text-slate-300">Remember this device for 30 days</span>
         </div>
 
-        <button onClick={handleVerify} className="w-full bg-primary text-white py-4 rounded-xl font-bold shadow-lg shadow-primary/20 flex items-center justify-center gap-2">
+        <button onClick={handleVerify} disabled={isSubmitting} className="w-full bg-primary text-white py-4 rounded-xl font-bold shadow-lg shadow-primary/20 flex items-center justify-center gap-2">
           Verify and Activate <ShieldCheck className="size-5" />
         </button>
 
@@ -4615,22 +8504,37 @@ function TwoFactorAuthScreen({ onBack, onNext, showToast }: { onBack: () => void
   );
 }
 
-function TwoFactorBackupCodesScreen({ onBack, onDone, showToast }: { onBack: () => void, onDone: () => void, showToast: (msg: string) => void }) {
-  const codes = [
-    '4829-1034',
-    '9283-4712',
-    '1029-3847',
-    '5562-9012',
-    '3341-8827',
-    '7710-2293'
-  ];
+function TwoFactorBackupCodesScreen({ backupCodes, onBack, onRegenerate, onDone, showToast }: { backupCodes: string[], onBack: () => void, onRegenerate: (code: string) => Promise<string[]>, onDone: () => void, showToast: (msg: string, type?: 'success' | 'info') => void }) {
+  const [codes, setCodes] = useState(backupCodes);
+  const [verificationCode, setVerificationCode] = useState('');
+
+  useEffect(() => {
+    setCodes(backupCodes);
+  }, [backupCodes]);
 
   const handleCopy = () => {
+    navigator.clipboard.writeText(codes.join('\n'));
     showToast('Backup codes copied to clipboard!');
   };
 
   const handleDownload = () => {
-    showToast('Downloading backup codes...');
+    downloadTextFile('preprint-explorer-backup-codes.txt', codes.join('\n'));
+    showToast('Backup codes downloaded as a text file.');
+  };
+
+  const handleRegenerate = async () => {
+    if (!verificationCode.trim()) {
+      showToast('Enter a current authenticator or backup code', 'info');
+      return;
+    }
+    try {
+      const nextCodes = await onRegenerate(verificationCode);
+      setCodes(nextCodes);
+      setVerificationCode('');
+      showToast('Backup codes regenerated');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to regenerate backup codes', 'info');
+    }
   };
 
   return (
@@ -4652,10 +8556,10 @@ function TwoFactorBackupCodesScreen({ onBack, onDone, showToast }: { onBack: () 
         </div>
 
         <div className="flex gap-3 mb-8">
-          <button className="flex-1 bg-primary text-white py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2">
+          <button onClick={handleDownload} className="flex-1 bg-primary text-white py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2">
             <Download className="size-4" /> Download Codes
           </button>
-          <button className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2">
+          <button onClick={handleCopy} className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2">
             <Copy className="size-4" /> Copy All
           </button>
         </div>
@@ -4673,6 +8577,20 @@ function TwoFactorBackupCodesScreen({ onBack, onDone, showToast }: { onBack: () 
           </div>
         </div>
 
+        <div className="space-y-3 mb-10">
+          <label className="text-sm font-bold">Regenerate Backup Codes</label>
+          <input
+            type="text"
+            value={verificationCode}
+            onChange={(e) => setVerificationCode(e.target.value)}
+            placeholder="Current authenticator or backup code"
+            className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-3 text-sm outline-none"
+          />
+          <button onClick={handleRegenerate} className="w-full rounded-xl border border-slate-200 dark:border-slate-800 py-3 text-sm font-bold">
+            Generate New Backup Codes
+          </button>
+        </div>
+
         <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-900/30 rounded-2xl p-4 flex gap-4 mb-10">
           <AlertTriangle className="size-5 text-amber-500 shrink-0" />
           <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
@@ -4686,15 +8604,189 @@ function TwoFactorBackupCodesScreen({ onBack, onDone, showToast }: { onBack: () 
   );
 }
 
+function PasskeysScreen({ passkeys, securitySummary, onBack, onRegisterPasskey, onDeletePasskey, showToast }: { passkeys: PasskeyCredential[], securitySummary: SecuritySummary | null, onBack: () => void, onRegisterPasskey: (label?: string) => Promise<PasskeyCredential[]>, onDeletePasskey: (passkeyId: string) => Promise<void>, showToast: (msg: string, type?: 'success' | 'info') => void }) {
+  const [label, setLabel] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [confirmingRemovalId, setConfirmingRemovalId] = useState<string | null>(null);
+  const hasRecoveryRisk = securitySummary ? !securitySummary.isEmailVerified || (!securitySummary.hasTwoFactorEnabled && securitySummary.passkeyCount === 0) || (securitySummary.hasTwoFactorEnabled && securitySummary.backupCodesRemaining === 0 && securitySummary.passkeyCount === 0) : false;
+
+  const handleRegister = async () => {
+    try {
+      setIsRegistering(true);
+      await onRegisterPasskey(label);
+      setLabel('');
+      showToast('Passkey registered');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to register passkey', 'info');
+    } finally {
+      setIsRegistering(false);
+    }
+  };
+
+  const handleRemove = async (passkeyId: string) => {
+    const removingLastPasskey = passkeys.length === 1 && passkeys[0]?.id === passkeyId;
+    const riskyRemoval = removingLastPasskey && securitySummary && (!securitySummary.hasTwoFactorEnabled || securitySummary.backupCodesRemaining === 0 || !securitySummary.isEmailVerified);
+    if (riskyRemoval) {
+      setConfirmingRemovalId(passkeyId);
+      return;
+    }
+    await removePasskey(passkeyId);
+  };
+
+  const removePasskey = async (passkeyId: string) => {
+    try {
+      setRemovingId(passkeyId);
+      await onDeletePasskey(passkeyId);
+      showToast('Passkey removed');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to remove passkey', 'info');
+    } finally {
+      setRemovingId(null);
+      setConfirmingRemovalId(null);
+    }
+  };
+
+  return (
+    <div className="relative flex flex-col h-full bg-white dark:bg-slate-950">
+      <header className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center gap-4 sticky top-0 z-10 bg-white dark:bg-slate-900">
+        <ArrowLeft className="cursor-pointer" onClick={onBack} />
+        <div>
+          <h2 className="text-xl font-bold">Passkeys</h2>
+          <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Security Settings</p>
+        </div>
+      </header>
+
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {securitySummary && (
+          <div className={`rounded-3xl border p-5 ${hasRecoveryRisk ? 'border-amber-200 bg-amber-50 dark:border-amber-900/30 dark:bg-amber-900/10' : 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/30 dark:bg-emerald-900/10'}`}>
+            <div className="flex items-start gap-3">
+              <AlertTriangle className={`mt-0.5 size-5 shrink-0 ${hasRecoveryRisk ? 'text-amber-500' : 'text-emerald-600'}`} />
+              <div className="space-y-2 text-sm">
+                <p className="font-bold">{hasRecoveryRisk ? 'Recovery coverage needs attention' : 'Recovery coverage looks healthy'}</p>
+                <p className="text-slate-600 dark:text-slate-300">
+                  {securitySummary.passkeyCount} passkey{securitySummary.passkeyCount === 1 ? '' : 's'}, {securitySummary.hasTwoFactorEnabled ? `${securitySummary.backupCodesRemaining} backup codes remaining` : '2FA disabled'}, {securitySummary.isEmailVerified ? 'verified email' : 'email not verified'}.
+                </p>
+                {hasRecoveryRisk && (
+                  <p className="text-slate-600 dark:text-slate-300">
+                    Add at least one passkey and keep email verification and recovery codes current so you do not lock yourself out of the account.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-6">
+          <h3 className="text-lg font-bold">Register a new passkey</h3>
+          <p className="mt-2 text-sm text-slate-500">Use Face ID, Touch ID, Windows Hello, or a hardware security key to sign in without a password.</p>
+          <div className="mt-4 flex gap-3">
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="Optional label, e.g. MacBook Pro"
+              className="flex-1 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-4 py-3 text-sm outline-none"
+            />
+            <button onClick={handleRegister} disabled={isRegistering} className="rounded-2xl bg-primary px-5 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20">
+              {isRegistering ? 'Waiting…' : 'Add Passkey'}
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Registered Passkeys</h3>
+          {passkeys.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-6 text-center text-sm text-slate-500">
+              No passkeys registered yet.
+            </div>
+          )}
+          {passkeys.map(passkey => (
+            <div key={passkey.id} className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-bold">{passkey.label}</p>
+                    <span className={`rounded-full px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-tighter ${passkey.deviceType === 'multiDevice' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
+                      {passkey.deviceType === 'multiDevice' ? 'Syncable' : 'Device-bound'}
+                    </span>
+                    {passkey.backedUp && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-tighter text-emerald-600">Backed up</span>}
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-500">Added {new Date(passkey.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                  <p className="text-[11px] text-slate-400">Last used {formatRelativeTimestamp(passkey.lastUsedAt)}</p>
+                  {passkey.transports.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {passkey.transports.map(transport => (
+                        <span key={transport} className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                          {transport}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => handleRemove(passkey.id)}
+                  disabled={removingId === passkey.id}
+                  className="rounded-xl border border-red-200 px-3 py-2 text-xs font-bold text-red-600"
+                >
+                  {removingId === passkey.id ? 'Removing…' : 'Remove'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {confirmingRemovalId && (
+          <ConfirmActionModal
+            title="Confirm Passkey Removal"
+            description="Removing this passkey weakens account recovery. Continue only if you still have another trusted sign-in or recovery method."
+            confirmLabel="Remove Passkey"
+            isConfirming={removingId === confirmingRemovalId}
+            onCancel={() => setConfirmingRemovalId(null)}
+            onConfirm={async () => {
+              const passkeyId = confirmingRemovalId;
+              setConfirmingRemovalId(null);
+              if (passkeyId) {
+                await removePasskey(passkeyId);
+              }
+            }}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 function EncryptionKeysScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
-  const [keys, setKeys] = useState([
-    { id: '1', name: 'Primary Research Key', created: '2023-10-15', status: 'Active' },
-    { id: '2', name: 'Backup Recovery Key', created: '2023-05-20', status: 'Stored' }
-  ]);
+  const [keys, setKeys] = useState<EncryptionKeyRecord[]>(() => storageService.getEncryptionKeys());
+
+  useEffect(() => {
+    storageService.saveEncryptionKeys(keys);
+  }, [keys]);
 
   const handleRotateKey = (id: string) => {
-    showToast('Rotating encryption key...');
-    setTimeout(() => showToast('Key rotated successfully!'), 1500);
+    setKeys((current) => current.map((key) => key.id === id ? {
+      ...key,
+      created: new Date().toISOString().slice(0, 10),
+      status: 'Active',
+    } : {
+      ...key,
+      status: key.status === 'Active' ? 'Stored' : key.status,
+    }));
+    showToast('Key rotated successfully!');
+  };
+
+  const handleGenerateKey = () => {
+    const keyCount = keys.length + 1;
+    setKeys((current) => [{
+      id: `generated-key-${Date.now()}`,
+      name: `Generated Key ${keyCount}`,
+      created: new Date().toISOString().slice(0, 10),
+      status: 'Stored',
+    }, ...current]);
+    showToast('Generated a new key record');
   };
 
   return (
@@ -4730,7 +8822,7 @@ function EncryptionKeysScreen({ onBack, showToast }: { onBack: () => void, showT
         </div>
 
         <button 
-          onClick={() => showToast('Generating new master key...')}
+          onClick={handleGenerateKey}
           className="w-full py-4 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-2xl text-slate-400 font-bold text-sm flex items-center justify-center gap-2 hover:border-primary hover:text-primary transition-colors"
         >
           <Plus className="size-5" />
@@ -4741,16 +8833,29 @@ function EncryptionKeysScreen({ onBack, showToast }: { onBack: () => void, showT
   );
 }
 
-function TrustedDevicesScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
-  const [devices, setDevices] = useState([
-    { id: '1', name: 'MacBook Pro 16"', type: 'Desktop', location: 'Zurich, Switzerland', lastActive: 'Now', isCurrent: true },
-    { id: '2', name: 'iPhone 15 Pro', type: 'Mobile', location: 'Zurich, Switzerland', lastActive: '2h ago', isCurrent: false },
-    { id: '3', name: 'iPad Air', type: 'Tablet', location: 'London, UK', lastActive: '3 days ago', isCurrent: false }
-  ]);
+function formatRelativeTimestamp(value: string) {
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) {
+    return value;
+  }
+  const diffMinutes = Math.round((Date.now() - timestamp) / (1000 * 60));
+  if (diffMinutes <= 1) return 'Just now';
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.round(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return new Date(value).toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
 
-  const handleRemoveDevice = (id: string) => {
-    setDevices(devices.filter(d => d.id !== id));
-    showToast('Device removed and access revoked.');
+function TrustedDevicesScreen({ devices, onBack, onRemoveDevice, showToast }: { devices: TrustedDevice[], onBack: () => void, onRemoveDevice: (id: string) => Promise<void>, showToast: (msg: string) => void }) {
+  const handleRemoveDevice = async (id: string) => {
+    try {
+      await onRemoveDevice(id);
+      showToast('Device removed and access revoked.');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to revoke device access');
+    }
   };
 
   return (
@@ -4762,6 +8867,11 @@ function TrustedDevicesScreen({ onBack, showToast }: { onBack: () => void, showT
       <div className="p-6 space-y-6 overflow-y-auto no-scrollbar">
         <div className="space-y-4">
           <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-2">Authorized Devices</h3>
+          {devices.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 text-center text-sm text-slate-500">
+              No remembered devices or active sessions found.
+            </div>
+          )}
           {devices.map(device => (
             <div key={device.id} className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
               <div className="flex items-center gap-4">
@@ -4772,8 +8882,12 @@ function TrustedDevicesScreen({ onBack, showToast }: { onBack: () => void, showT
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-bold">{device.name}</p>
                     {device.isCurrent && <span className="text-[8px] bg-emerald-100 text-emerald-600 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter">Current</span>}
+                    <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter ${device.accessType === 'trusted' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
+                      {device.accessType === 'trusted' ? 'Remembered' : 'Session'}
+                    </span>
                   </div>
-                  <p className="text-[10px] text-slate-500">{device.location} • {device.lastActive}</p>
+                  <p className="text-[10px] text-slate-500">{device.location} • {formatRelativeTimestamp(device.lastActive)}</p>
+                  {device.trustedUntil && <p className="text-[10px] text-slate-400">Trusted until {new Date(device.trustedUntil).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</p>}
                 </div>
               </div>
               {!device.isCurrent && (
@@ -4799,19 +8913,14 @@ function TrustedDevicesScreen({ onBack, showToast }: { onBack: () => void, showT
   );
 }
 
-function SecurityLogScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
-  const logs = [
-    { id: 1, type: 'login', title: 'Logged in', device: 'Chrome on Windows', location: 'New York, USA', time: 'Today at 10:45 AM', current: true },
-    { id: 2, type: 'password', title: 'Password Changed', device: 'Safari on iPhone', location: 'London, UK', time: 'Oct 22, 2023 at 02:15 PM' },
-    { id: 3, type: '2fa', title: '2FA Enabled', device: 'Edge on macOS', location: 'Berlin, Germany', time: 'Oct 19, 2023 at 09:30 AM' },
-    { id: 4, type: 'device', title: 'New Device Recognized', device: 'Firefox on Linux', location: 'Tokyo, Japan', time: 'Oct 15, 2023 at 11:20 PM', alert: true },
-  ];
-
+function SecurityLogScreen({ logs, onBack, onRotateSession, onLogoutOthers, showToast }: { logs: SecurityEvent[], onBack: () => void, onRotateSession: () => Promise<void>, onLogoutOthers: () => Promise<void>, showToast: (msg: string, type?: 'success' | 'info') => void }) {
+  const [selectedLog, setSelectedLog] = useState<SecurityEvent | null>(null);
   const getIcon = (type: string) => {
     switch (type) {
       case 'login': return <LogIn className="size-5" />;
       case 'password': return <Key className="size-5" />;
       case '2fa': return <Shield className="size-5" />;
+      case 'session': return <History className="size-5" />;
       case 'device': return <Smartphone className="size-5" />;
       default: return <Shield className="size-5" />;
     }
@@ -4820,7 +8929,28 @@ function SecurityLogScreen({ onBack, showToast }: { onBack: () => void, showToas
   const getIconBg = (type: string) => {
     switch (type) {
       case 'device': return 'bg-amber-100 text-amber-600';
+      case 'password': return 'bg-rose-100 text-rose-600';
       default: return 'bg-primary/10 text-primary';
+    }
+  };
+
+  const latestAlertLog = logs.find((log) => log.alert) ?? logs[0] ?? null;
+
+  const handleRotateCurrentSession = async () => {
+    try {
+      await onRotateSession();
+      showToast('Session rotated successfully');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to rotate session', 'info');
+    }
+  };
+
+  const handleLogoutOthers = async () => {
+    try {
+      await onLogoutOthers();
+      showToast('Signed out of all other sessions');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to revoke other sessions', 'info');
     }
   };
 
@@ -4837,12 +8967,17 @@ function SecurityLogScreen({ onBack, showToast }: { onBack: () => void, showToas
       <div className="flex-1 overflow-y-auto">
         <div className="px-4 py-6">
           <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-4">Activity Log</h3>
+          {logs.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-6 text-center text-sm text-slate-500">
+              No security events recorded yet.
+            </div>
+          )}
           
           <div className="space-y-6">
             {logs.map(log => (
               <div 
                 key={log.id} 
-                onClick={() => showToast(`Viewing details for: ${log.title}`)}
+                onClick={() => setSelectedLog(log)}
                 className="flex items-start gap-4 group cursor-pointer"
               >
                 <div className={`size-12 rounded-xl flex items-center justify-center shrink-0 ${getIconBg(log.type)}`}>
@@ -4866,31 +9001,58 @@ function SecurityLogScreen({ onBack, showToast }: { onBack: () => void, showToas
 
           <div className="mt-10 space-y-6">
             <button 
-              onClick={() => showToast('Signed out of all other sessions')}
+              onClick={handleLogoutOthers}
               className="w-full flex items-center justify-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 py-4 rounded-2xl font-bold text-slate-700 dark:text-slate-200 shadow-sm"
             >
-              <LogOut className="size-5" /> Sign Out of All Sessions
+              <LogOut className="size-5" /> Sign Out of Other Sessions
+            </button>
+            <button 
+              onClick={handleRotateCurrentSession}
+              className="w-full flex items-center justify-center gap-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 py-4 rounded-2xl font-bold text-slate-700 dark:text-slate-200 shadow-sm"
+            >
+              <History className="size-5" /> Rotate Current Session
             </button>
             <p className="text-center text-xs text-slate-400 px-10">
-              This will log you out from all other devices and browsers currently active.
+              This only revokes your other active sessions. Remembered devices are managed separately above.
             </p>
 
             <div className="bg-slate-50 dark:bg-slate-900 rounded-2xl p-6 border border-dashed border-slate-200 dark:border-slate-700 text-center">
               <p className="text-sm text-slate-500">
-                Don't recognize an activity? <button onClick={() => showToast('Security check initiated')} className="text-primary font-bold">Secure your account</button>
+                Don't recognize an activity? <button onClick={() => latestAlertLog ? setSelectedLog(latestAlertLog) : void handleRotateCurrentSession()} className="text-primary font-bold">Secure your account</button>
               </p>
             </div>
           </div>
         </div>
       </div>
+      <AnimatePresence>
+        {selectedLog && (
+          <ConfirmActionModal
+            title={selectedLog.title}
+            description={`${selectedLog.device} • ${selectedLog.location} • ${selectedLog.time}${selectedLog.alert ? ' • Marked as noteworthy activity.' : ''}`}
+            confirmLabel="Close"
+            cancelLabel="Rotate Session"
+            onCancel={() => {
+              void handleRotateCurrentSession().finally(() => setSelectedLog(null));
+            }}
+            onConfirm={() => setSelectedLog(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function Sidebar({ onClose, onNavigate, onLegal }: { 
+function Sidebar({ currentUser, currentScreen, legalType, unreadNotificationsCount, unreadMessagesCount, openModerationCount, onClose, onNavigate, onLegal, onSignOut }: { 
+  currentUser: User,
+  currentScreen: Screen,
+  legalType: 'tos' | 'privacy',
+  unreadNotificationsCount: number,
+  unreadMessagesCount: number,
+  openModerationCount: number,
   onClose: () => void, 
   onNavigate: (s: Screen) => void,
-  onLegal: (type: 'tos' | 'privacy') => void
+  onLegal: (type: 'tos' | 'privacy') => void,
+  onSignOut: () => Promise<void>
 }) {
   return (
     <motion.div 
@@ -4906,45 +9068,50 @@ function Sidebar({ onClose, onNavigate, onLegal }: {
           onClick={() => { onClose(); onNavigate('profile'); }}
         >
           <img 
-            src="https://picsum.photos/seed/profile/200/200" 
+            src={currentUser.imageUrl} 
             alt="Profile" 
             className="size-16 rounded-full border-2 border-primary/10 object-cover group-hover:border-primary transition-all"
           />
           <div>
-            <h3 className="text-lg font-bold group-hover:text-primary transition-colors">Dr. Aris Thorne</h3>
-            <p className="text-xs text-slate-500">aris.thorne@uzh.ch</p>
+            <h3 className="text-lg font-bold group-hover:text-primary transition-colors">{currentUser.name}</h3>
+            <p className="text-xs text-slate-500">{currentUser.email}</p>
           </div>
         </div>
         <div className="flex gap-4">
           <div className="text-center">
-            <p className="text-sm font-bold text-primary">1.2k</p>
+            <p className="text-sm font-bold text-primary">{currentUser.followers.toLocaleString()}</p>
             <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Followers</p>
           </div>
           <div className="text-center">
-            <p className="text-sm font-bold text-primary">482</p>
+            <p className="text-sm font-bold text-primary">{currentUser.following.toLocaleString()}</p>
             <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Following</p>
           </div>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-2 no-scrollbar">
-        <SidebarItem icon={<Bell className="size-5" />} label="Alerts" onClick={() => onNavigate('notifications')} />
-        <SidebarItem icon={<TrendingUp className="size-5" />} label="Trends" onClick={() => onNavigate('trends')} />
-        <SidebarItem icon={<LibraryIcon className="size-5" />} label="Library" onClick={() => onNavigate('library')} />
-        <SidebarItem icon={<MessageSquare className="size-5" />} label="Messages" onClick={() => onNavigate('chat')} />
-        <SidebarItem icon={<Settings className="size-5" />} label="Profile Settings" onClick={() => onNavigate('notification-settings')} />
+        <SidebarItem icon={<Home className="size-5" />} label="Home" active={currentScreen === 'home'} onClick={() => onNavigate('home')} />
+        <SidebarItem icon={<Bell className="size-5" />} label="Alerts" active={currentScreen === 'notifications'} badge={unreadNotificationsCount > 0 ? unreadNotificationsCount : undefined} onClick={() => onNavigate('notifications')} />
+        <SidebarItem icon={<TrendingUp className="size-5" />} label="Trends" active={currentScreen === 'trends' || currentScreen === 'topic-insight'} onClick={() => onNavigate('trends')} />
+        <SidebarItem icon={<Rss className="size-5" />} label="Feeds" active={currentScreen === 'feeds'} onClick={() => onNavigate('feeds')} />
+        <SidebarItem icon={<LibraryIcon className="size-5" />} label="Library" active={currentScreen === 'library' || currentScreen === 'collections' || currentScreen === 'collection-detail' || currentScreen === 'share'} onClick={() => onNavigate('library')} />
+        <SidebarItem icon={<MessageSquare className="size-5" />} label="Messages" active={currentScreen === 'chat' || currentScreen === 'chat-detail'} badge={unreadMessagesCount > 0 ? unreadMessagesCount : undefined} onClick={() => onNavigate('chat')} />
+        <SidebarItem icon={<Settings className="size-5" />} label="Settings" active={currentScreen === 'notification-settings' || currentScreen === 'security-settings' || currentScreen === 'change-password' || currentScreen === '2fa-setup' || currentScreen === '2fa-backup' || currentScreen === 'security-log' || currentScreen === 'passkeys' || currentScreen === 'encryption-keys' || currentScreen === 'trusted-devices'} onClick={() => onNavigate('notification-settings')} />
+        {currentUser.isAdmin && (
+          <SidebarItem icon={<ShieldCheck className="size-5" />} label="Moderation Center" active={currentScreen === 'moderation-center'} badge={openModerationCount > 0 ? openModerationCount : undefined} onClick={() => onNavigate('moderation-center')} />
+        )}
         
         <div className="h-px bg-slate-100 dark:bg-slate-800 my-4"></div>
         
-        <SidebarItem icon={<FileText className="size-5" />} label="Terms of Service" onClick={() => onLegal('tos')} />
-        <SidebarItem icon={<Shield className="size-5" />} label="Privacy Policy" onClick={() => onLegal('privacy')} />
-        <SidebarItem icon={<HelpCircle className="size-5" />} label="Help" onClick={() => onNavigate('help')} />
-        <SidebarItem icon={<MessageSquare className="size-5" />} label="App Contact" onClick={() => onNavigate('contact')} />
+        <SidebarItem icon={<FileText className="size-5" />} label="Terms of Service" active={currentScreen === 'legal' && legalType === 'tos'} onClick={() => onLegal('tos')} />
+        <SidebarItem icon={<Shield className="size-5" />} label="Privacy Policy" active={currentScreen === 'legal' && legalType === 'privacy'} onClick={() => onLegal('privacy')} />
+        <SidebarItem icon={<HelpCircle className="size-5" />} label="Help" active={currentScreen === 'help'} onClick={() => onNavigate('help')} />
+        <SidebarItem icon={<MessageSquare className="size-5" />} label="App Contact" active={currentScreen === 'contact'} onClick={() => onNavigate('contact')} />
       </div>
 
       <div className="p-6 border-t border-slate-100 dark:border-slate-800">
         <button 
-          onClick={() => { onClose(); onNavigate('login'); }}
+          onClick={async () => { await onSignOut(); onClose(); }}
           className="flex items-center gap-3 text-red-500 font-bold text-sm"
         >
           <LogOut className="size-5" />
@@ -4962,37 +9129,119 @@ function Sidebar({ onClose, onNavigate, onLegal }: {
   );
 }
 
-function SidebarItem({ icon, label, onClick }: { icon: React.ReactNode, label: string, onClick: () => void }) {
+function SidebarItem({ icon, label, active = false, badge, onClick }: { icon: React.ReactNode, label: string, active?: boolean, badge?: number, onClick: () => void }) {
   return (
     <button 
       onClick={onClick}
-      className="w-full flex items-center gap-4 p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-slate-700 dark:text-slate-300"
+      className={`w-full flex items-center gap-4 p-3 rounded-xl transition-colors ${active ? 'bg-primary/10 text-primary' : 'text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800'}`}
     >
-      <div className="text-primary">{icon}</div>
+      <div className={active ? 'text-primary' : 'text-primary'}>{icon}</div>
       <span className="text-sm font-bold">{label}</span>
+      {badge !== undefined && (
+        <span className="ml-auto rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-white">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
     </button>
   );
 }
 
-function ChatScreen({ onChatClick, onBack }: { onChatClick: (chat: Chat) => void, onBack: () => void }) {
+function ChatScreen({ currentUserId, onChatClick, onStartChat, onBack, showToast }: { currentUserId: string, onChatClick: (chat: Chat) => void, onStartChat: (user: User) => void, onBack: () => void, showToast: (msg: string, type?: 'success' | 'info') => void }) {
+  const { dataset } = useAppData();
+  const [showSearch, setShowSearch] = useState(false);
+  const [chatSearchQuery, setChatSearchQuery] = useState('');
+  const [composeSearchQuery, setComposeSearchQuery] = useState('');
+  const [showCompose, setShowCompose] = useState(false);
+  const composeSearchRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!showCompose) {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      composeSearchRef.current?.focus();
+    });
+  }, [showCompose]);
+
+  const filteredChats = dataset.chats.filter(chat => {
+    const normalized = chatSearchQuery.trim().toLowerCase();
+    if (!normalized) {
+      return true;
+    }
+    const otherUserId = chat.participants.find(p => p !== currentUserId);
+    const otherUser = dataset.users.find(u => u.id === otherUserId);
+    const messageText = chat.messages.map(message => message.text).join(' ').toLowerCase();
+    return (
+      (otherUser?.name ?? otherUserId ?? '').toLowerCase().includes(normalized)
+      || (otherUser?.affiliation ?? '').toLowerCase().includes(normalized)
+      || (chat.lastMessage ?? '').toLowerCase().includes(normalized)
+      || messageText.includes(normalized)
+    );
+  });
+
+  const availableUsers = dataset.users
+    .filter(user => user.id !== currentUserId)
+    .filter(user => {
+      if (!composeSearchQuery.trim()) {
+        return true;
+      }
+      const normalized = composeSearchQuery.toLowerCase();
+      return user.name.toLowerCase().includes(normalized) || user.affiliation.toLowerCase().includes(normalized);
+    })
+    .slice(0, 8);
+
+  const handleStartChat = (user: User) => {
+    onStartChat(user);
+    setShowCompose(false);
+    setComposeSearchQuery('');
+  };
+
+  const handleComposeSearchReset = () => {
+    setComposeSearchQuery('');
+    window.requestAnimationFrame(() => {
+      composeSearchRef.current?.focus();
+    });
+    showToast('Showing available researchers again.');
+  };
+
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950">
       <header className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between sticky top-0 bg-white dark:bg-slate-950 z-20">
-        <h2 className="text-xl font-bold">Messages</h2>
         <div className="flex items-center gap-3">
-          <div className="size-10 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500">
+          <button type="button" onClick={onBack} className="rounded-full p-2 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Back">
+            <ArrowLeft className="size-5" />
+          </button>
+          <h2 className="text-xl font-bold">Messages</h2>
+        </div>
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={() => setShowSearch(prev => !prev)} className="size-10 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500 transition-colors hover:bg-slate-200 dark:hover:bg-slate-700" aria-label="Search conversations">
             <Search className="size-5" />
-          </div>
-          <div className="size-10 rounded-full bg-primary text-white flex items-center justify-center shadow-lg shadow-primary/20">
+          </button>
+          <button type="button" onClick={() => setShowCompose(true)} className="size-10 rounded-full bg-primary text-white flex items-center justify-center shadow-lg shadow-primary/20 active:scale-95 transition-transform" aria-label="Start a new chat">
             <Plus className="size-5" />
-          </div>
+          </button>
         </div>
       </header>
 
+      {showSearch && (
+        <div className="border-b border-slate-100 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-950">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={chatSearchQuery}
+              onChange={(event) => setChatSearchQuery(event.target.value)}
+              placeholder="Search people or messages..."
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-slate-900"
+            />
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto no-scrollbar">
-        {MOCK_CHATS.map(chat => {
-          const otherUserId = chat.participants.find(p => p !== 'aris_thorne');
-          const otherUser = MOCK_USERS.find(u => u.id === otherUserId);
+        {filteredChats.length > 0 ? filteredChats.map(chat => {
+          const otherUserId = chat.participants.find(p => p !== currentUserId);
+          const otherUser = dataset.users.find(u => u.id === otherUserId);
           
           return (
             <div 
@@ -5015,7 +9264,7 @@ function ChatScreen({ onChatClick, onBack }: { onChatClick: (chat: Chat) => void
               <div className="flex-1 min-w-0">
                 <div className="flex justify-between items-center mb-1">
                   <h4 className="text-sm font-bold truncate">{otherUser?.name || otherUserId}</h4>
-                  <span className="text-[10px] text-slate-400 font-medium">{chat.lastMessageTime}</span>
+                  <span className="text-[10px] text-slate-400 font-medium">{formatChatListTime(chat.lastMessageAt, chat.lastMessageTime)}</span>
                 </div>
                 <p className={`text-xs truncate ${chat.unreadCount > 0 ? 'text-slate-900 dark:text-slate-100 font-bold' : 'text-slate-500'}`}>
                   {chat.lastMessage}
@@ -5023,22 +9272,170 @@ function ChatScreen({ onChatClick, onBack }: { onChatClick: (chat: Chat) => void
               </div>
             </div>
           );
-        })}
+        }) : (
+          <div className="px-6 py-12 text-center">
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+              {chatSearchQuery.trim() ? 'No conversations match that search.' : 'No conversations yet.'}
+            </p>
+            <p className="mt-2 text-xs text-slate-500">
+              {chatSearchQuery.trim()
+                ? 'Try another researcher name, institution, or message keyword.'
+                : 'Start a direct conversation with a researcher from your network.'}
+            </p>
+            {!chatSearchQuery.trim() && (
+              <button
+                type="button"
+                onClick={() => setShowCompose(true)}
+                className="mt-4 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20"
+              >
+                Start a conversation
+              </button>
+            )}
+          </div>
+        )}
       </div>
+
+      <AnimatePresence>
+        {showCompose && (
+          <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/50 p-0 backdrop-blur-sm md:items-center md:p-4">
+            <motion.div
+              initial={{ y: '100%', opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: '100%', opacity: 0 }}
+              className="w-full max-w-md rounded-t-3xl bg-white p-6 shadow-2xl dark:bg-slate-900 md:rounded-3xl"
+            >
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-bold">Start a conversation</h3>
+                  <p className="text-xs text-slate-500">Choose a researcher from your network.</p>
+                </div>
+                <button type="button" onClick={() => setShowCompose(false)} className="rounded-full p-2 hover:bg-slate-100 dark:hover:bg-slate-800">
+                  <X className="size-5" />
+                </button>
+              </div>
+              <div className="relative mb-4">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  ref={composeSearchRef}
+                  type="text"
+                  value={composeSearchQuery}
+                  onChange={(event) => setComposeSearchQuery(event.target.value)}
+                  placeholder="Search researchers..."
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-slate-800"
+                />
+              </div>
+              <div className="max-h-80 space-y-3 overflow-y-auto no-scrollbar">
+                {availableUsers.length > 0 ? availableUsers.map(user => (
+                  <button
+                    type="button"
+                    key={user.id}
+                    onClick={() => handleStartChat(user)}
+                    className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 px-3 py-3 text-left transition-colors hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                  >
+                    <img src={user.imageUrl} alt={user.name} className="size-12 rounded-full object-cover" referrerPolicy="no-referrer" />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold">{user.name}</p>
+                      <p className="truncate text-xs text-slate-500">{user.affiliation}</p>
+                    </div>
+                  </button>
+                )) : (
+                  <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-8 text-center dark:border-slate-700">
+                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">No researchers found.</p>
+                    <button type="button" onClick={handleComposeSearchReset} className="mt-3 text-xs font-bold uppercase tracking-widest text-primary">
+                      Clear search
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function ChatDetailScreen({ chat, onBack, showToast }: { chat: Chat, onBack: () => void, showToast: (msg: string) => void }) {
+function ChatDetailScreen({ currentUserId, chat, onBack, onOpenUserProfile, onChatUpdated, onReport, onBlockUser, onUnblockUser, isBlocked, showToast }: { currentUserId: string, chat: Chat, onBack: () => void, onOpenUserProfile: (userId: string) => void, onChatUpdated: (chat: Chat) => void, onReport: () => void, onBlockUser: (userId: string) => Promise<void>, onUnblockUser: (userId: string) => Promise<void>, isBlocked: boolean, showToast: (msg: string, type?: 'success' | 'info') => void }) {
+  const { dataset } = useAppData();
   const [message, setMessage] = useState('');
-  const otherUserId = chat.participants.find(p => p !== 'aris_thorne');
-  const otherUser = MOCK_USERS.find(u => u.id === otherUserId);
+  const [isUpdatingBlock, setIsUpdatingBlock] = useState(false);
+  const [showInfoPanel, setShowInfoPanel] = useState(false);
+  const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
+  const otherUserId = chat.participants.find(p => p !== currentUserId);
+  const otherUser = dataset.users.find(u => u.id === otherUserId);
+  const generatedMeetingLink = `${window.location.origin}/chat/${chat.id}?mode=meeting`;
+  const messageGroups = chat.messages.reduce<Array<{ label: string; items: Message[] }>>((groups, item) => {
+    const label = formatChatDayLabel(item.createdAt);
+    const lastGroup = groups[groups.length - 1];
+    if (!lastGroup || lastGroup.label !== label) {
+      groups.push({ label, items: [item] });
+    } else {
+      lastGroup.items.push(item);
+    }
+    return groups;
+  }, []);
 
-  const handleSend = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (chat.unreadCount === 0) {
+      return;
+    }
+    markChatRead(chat.id)
+      .then((response) => onChatUpdated(response.chat))
+      .catch(() => undefined);
+  }, [chat.id, chat.unreadCount, onChatUpdated]);
+
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (message.trim()) {
-      showToast('Message sent!');
-      setMessage('');
+      try {
+        const response = await sendMessage(chat.id, message);
+        onChatUpdated(response.chat);
+        showToast('Message sent!');
+        setMessage('');
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : 'Unable to send message', 'info');
+      }
+    }
+  };
+
+  const handleBlockToggle = async () => {
+    if (!otherUserId) {
+      return;
+    }
+    try {
+      setIsUpdatingBlock(true);
+      if (isBlocked) {
+        await onUnblockUser(otherUserId);
+        showToast('User unblocked');
+      } else {
+        await onBlockUser(otherUserId);
+        showToast('User blocked');
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to update blocked status', 'info');
+    } finally {
+      setIsUpdatingBlock(false);
+    }
+  };
+
+  const handleShareMeetingLink = async (mode: 'audio' | 'video') => {
+    await copyText(`${generatedMeetingLink}&type=${mode}`);
+    showToast(`${mode === 'audio' ? 'Audio' : 'Video'} invite link copied`);
+  };
+
+  const handleAttachmentInsert = async (kind: 'paper-link' | 'meeting-link' | 'citation-note') => {
+    const attachmentText = kind === 'paper-link'
+      ? `Shared library link: ${window.location.origin}/library`
+      : kind === 'meeting-link'
+        ? `Shared meeting link: ${generatedMeetingLink}`
+        : 'Citation note: I found a relevant reference worth reviewing together.';
+    try {
+      const response = await sendMessage(chat.id, attachmentText);
+      onChatUpdated(response.chat);
+      setShowAttachmentMenu(false);
+      showToast('Attachment added to the conversation');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to share attachment', 'info');
     }
   };
 
@@ -5047,52 +9444,88 @@ function ChatDetailScreen({ chat, onBack, showToast }: { chat: Chat, onBack: () 
       <header className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between sticky top-0 z-20">
         <div className="flex items-center gap-3">
           <ArrowLeft className="cursor-pointer" onClick={onBack} />
-          <img 
-            src={otherUser?.imageUrl || `https://i.pravatar.cc/150?u=${otherUserId}`} 
-            alt="" 
-            className="size-10 rounded-full object-cover"
-          />
-          <div>
-            <h2 className="text-sm font-bold">{otherUser?.name || otherUserId}</h2>
-            <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-widest">Online</p>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (otherUserId) {
+                onOpenUserProfile(otherUserId);
+              }
+            }}
+            disabled={!otherUserId}
+            className="flex items-center gap-3 rounded-2xl px-1 py-1 text-left transition-colors hover:bg-slate-100 disabled:cursor-default disabled:hover:bg-transparent dark:hover:bg-slate-800"
+          >
+            <img 
+              src={otherUser?.imageUrl || `https://i.pravatar.cc/150?u=${otherUserId}`} 
+              alt="" 
+              className="size-10 rounded-full object-cover"
+            />
+            <div>
+              <h2 className="text-sm font-bold">{otherUser?.name || otherUserId}</h2>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Direct conversation</p>
+            </div>
+          </button>
         </div>
-        <div className="flex items-center gap-4 text-slate-400">
-          <Phone className="size-5" />
-          <Video className="size-5" />
-          <Info className="size-5" />
+        <div className="flex items-center gap-3 text-slate-400">
+          <button type="button" onClick={onReport} className="rounded-full p-2 hover:bg-slate-100 dark:hover:bg-slate-800" title="Report conversation">
+            <AlertTriangle className="size-5" />
+          </button>
+          {otherUserId && (
+            <button type="button" onClick={() => void handleBlockToggle()} disabled={isUpdatingBlock} className="rounded-full p-2 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50" title={isBlocked ? 'Unblock user' : 'Block user'}>
+              <Lock className="size-5" />
+            </button>
+          )}
+          <button type="button" onClick={() => void handleShareMeetingLink('audio')} className="rounded-full p-2 hover:bg-slate-100 dark:hover:bg-slate-800" title="Copy audio invite link">
+            <Phone className="size-5" />
+          </button>
+          <button type="button" onClick={() => void handleShareMeetingLink('video')} className="rounded-full p-2 hover:bg-slate-100 dark:hover:bg-slate-800" title="Copy video invite link">
+            <Video className="size-5" />
+          </button>
+          <button type="button" onClick={() => setShowInfoPanel(true)} className="rounded-full p-2 hover:bg-slate-100 dark:hover:bg-slate-800" title="Conversation details">
+            <Info className="size-5" />
+          </button>
         </div>
       </header>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar">
-        <div className="text-center py-4">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-full">
-            Today
-          </span>
-        </div>
-
-        {chat.messages.map(msg => (
-          <div 
-            key={msg.id} 
-            className={`flex ${msg.senderId === 'aris_thorne' ? 'justify-end' : 'justify-start'}`}
-          >
-            <div className={`max-w-[80%] p-4 rounded-2xl text-sm shadow-sm ${
-              msg.senderId === 'aris_thorne' 
-                ? 'bg-primary text-white rounded-tr-none' 
-                : 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 rounded-tl-none border border-slate-100 dark:border-slate-800'
-            }`}>
-              {msg.text}
-              <p className={`text-[8px] mt-1 text-right ${msg.senderId === 'aris_thorne' ? 'text-white/70' : 'text-slate-400'}`}>
-                {msg.timestamp}
-              </p>
+        {(messageGroups.length > 0 ? messageGroups : [{ label: 'Today', items: chat.messages }]).map((group) => (
+          <React.Fragment key={group.label}>
+            <div className="text-center py-4">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-full">
+                {group.label}
+              </span>
             </div>
-          </div>
+
+            {group.items.map((msg) => (
+              <div 
+                key={msg.id} 
+                className={`flex ${msg.senderId === currentUserId ? 'justify-end' : 'justify-start'}`}
+              >
+                <div className={`max-w-[80%] p-4 rounded-2xl text-sm shadow-sm ${
+                  msg.senderId === currentUserId 
+                    ? 'bg-primary text-white rounded-tr-none' 
+                    : 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 rounded-tl-none border border-slate-100 dark:border-slate-800'
+                }`}>
+                  <div className="whitespace-pre-wrap leading-relaxed">
+                    {renderChatMessageContent(msg.text)}
+                  </div>
+                  <p className={`text-[8px] mt-1 text-right ${msg.senderId === currentUserId ? 'text-white/70' : 'text-slate-400'}`}>
+                    {msg.timestamp}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </React.Fragment>
         ))}
       </div>
 
       <div className="p-4 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800">
+        {isBlocked && (
+          <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-200">
+            This conversation is blocked. Unblock this user before sending another message.
+          </div>
+        )}
         <form onSubmit={handleSend} className="flex items-center gap-2">
-          <button type="button" className="p-2 text-slate-400">
+          <button type="button" onClick={() => setShowAttachmentMenu((current) => !current)} className="p-2 text-slate-400">
             <Paperclip className="size-5" />
           </button>
           <input 
@@ -5100,34 +9533,124 @@ function ChatDetailScreen({ chat, onBack, showToast }: { chat: Chat, onBack: () 
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             placeholder="Type a message..."
+            disabled={isBlocked}
             className="flex-1 bg-slate-100 dark:bg-slate-800 border-none rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/50 outline-none"
           />
           <button 
             type="submit"
-            disabled={!message.trim()}
-            className={`p-3 rounded-xl transition-all ${message.trim() ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}
+            disabled={!message.trim() || isBlocked}
+            className={`p-3 rounded-xl transition-all ${message.trim() && !isBlocked ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}
           >
             <Send className="size-5" />
           </button>
         </form>
+        <AnimatePresence>
+          {showAttachmentMenu && !isBlocked && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              className="mt-3 grid grid-cols-3 gap-2"
+            >
+              <button type="button" onClick={() => void handleAttachmentInsert('paper-link')} className="rounded-2xl border border-slate-200 px-3 py-3 text-xs font-bold dark:border-slate-700">
+                Share paper
+              </button>
+              <button type="button" onClick={() => void handleAttachmentInsert('meeting-link')} className="rounded-2xl border border-slate-200 px-3 py-3 text-xs font-bold dark:border-slate-700">
+                Share meeting
+              </button>
+              <button type="button" onClick={() => void handleAttachmentInsert('citation-note')} className="rounded-2xl border border-slate-200 px-3 py-3 text-xs font-bold dark:border-slate-700">
+                Citation note
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
+
+      <AnimatePresence>
+        {showInfoPanel && (
+          <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/50 p-0 backdrop-blur-sm md:items-center md:p-4">
+            <motion.div
+              initial={{ y: '100%', opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: '100%', opacity: 0 }}
+              className="w-full max-w-md rounded-t-3xl bg-white p-6 shadow-2xl dark:bg-slate-900 md:rounded-3xl"
+            >
+              <div className="mb-5 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-bold">Conversation details</h3>
+                  <p className="text-xs text-slate-500">Context for this researcher connection.</p>
+                </div>
+                <button type="button" onClick={() => setShowInfoPanel(false)} className="rounded-full p-2 hover:bg-slate-100 dark:hover:bg-slate-800">
+                  <X className="size-5" />
+                </button>
+              </div>
+              <div className="space-y-4">
+                <div className="flex items-center gap-3 rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
+                  <img src={otherUser?.imageUrl || `https://i.pravatar.cc/150?u=${otherUserId}`} alt={otherUser?.name || 'Researcher'} className="size-12 rounded-full object-cover" />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold">{otherUser?.name || otherUserId}</p>
+                    <p className="truncate text-xs text-slate-500">{otherUser?.affiliation || 'Independent Researcher'}</p>
+                  </div>
+                </div>
+                <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/70">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Shared context</p>
+                  <p className="mt-2 text-sm text-slate-700 dark:text-slate-200">{otherUser?.bio || 'No biography is available for this researcher yet.'}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {otherUserId && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenUserProfile(otherUserId)}
+                      className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold dark:border-slate-700"
+                    >
+                      View profile
+                    </button>
+                  )}
+                  <button type="button" onClick={() => void copyText(otherUser?.email || `${otherUser?.id ?? 'researcher'}@preprint-explorer.local`).then(() => showToast('Contact address copied'))} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold dark:border-slate-700">
+                    Copy contact
+                  </button>
+                  <button type="button" onClick={() => void handleShareMeetingLink('video')} className="rounded-2xl bg-primary px-4 py-3 text-sm font-semibold text-white">
+                    Copy meeting link
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function HelpScreen({ onBack }: { onBack: () => void }) {
+function HelpScreen({ onBack, onOpenMenu, onOpenContact, onOpenMessages, onOpenLibrary, onOpenFeeds, onOpenSettings, onOpenHome }: { onBack: () => void, onOpenMenu: () => void, onOpenContact: () => void, onOpenMessages: () => void, onOpenLibrary: () => void, onOpenFeeds: () => void, onOpenSettings: () => void, onOpenHome: () => void }) {
+  const [query, setQuery] = useState('');
+  const [activeTopic, setActiveTopic] = useState<'all' | 'library' | 'feeds' | 'account'>('all');
+  const supportTickets = storageService.getSupportTickets();
   const faqs = [
-    { q: 'How do I save a preprint?', a: 'Tap the bookmark icon on any paper card or in the reader view to save it to your library.' },
-    { q: 'Can I download papers for offline reading?', a: 'Yes, papers you save to your library are automatically cached for offline access. You can also download them as PDF.' },
-    { q: 'How do I follow an author?', a: 'Visit an author\'s profile and tap the "Follow" button to receive alerts when they publish new work.' },
-    { q: 'What are custom feeds?', a: 'Custom feeds allow you to track specific keywords or topics across multiple preprint servers in real-time.' }
+    { q: 'How do I save a preprint?', a: 'Tap the bookmark icon on any paper card or in the reader view to save it to your library.', topic: 'library' as const, actionLabel: 'Open library', onAction: onOpenLibrary },
+    { q: 'Can I download papers for offline reading?', a: 'Yes, papers you save to your library are automatically cached for offline access. You can also download them as PDF.', topic: 'library' as const, actionLabel: 'Go to library', onAction: onOpenLibrary },
+    { q: 'How do I follow an author?', a: 'Visit an author\'s profile and tap the "Follow" button to receive alerts when they publish new work.', topic: 'account' as const, actionLabel: 'Open home feed', onAction: onOpenHome },
+    { q: 'What are custom feeds?', a: 'Custom feeds allow you to track specific keywords or topics across multiple preprint servers in real-time.', topic: 'feeds' as const, actionLabel: 'Manage feeds', onAction: onOpenFeeds },
+    { q: 'How does central feed filtering work?', a: 'Select a feed on the home screen and Preprint Explorer will apply that feed’s selected sources and categories to the main paper stream.', topic: 'feeds' as const, actionLabel: 'Open home feed', onAction: onOpenHome },
+    { q: 'How do I secure my account?', a: 'Open Settings, then Security, to manage passkeys, trusted devices, two-factor authentication, and recent activity.', topic: 'account' as const, actionLabel: 'Open settings', onAction: onOpenSettings },
   ];
+  const filteredFaqs = faqs.filter((faq) => {
+    const matchesTopic = activeTopic === 'all' || faq.topic === activeTopic;
+    const normalized = query.trim().toLowerCase();
+    const matchesQuery = !normalized || faq.q.toLowerCase().includes(normalized) || faq.a.toLowerCase().includes(normalized);
+    return matchesTopic && matchesQuery;
+  });
 
   return (
     <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950">
-      <header className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center gap-4 sticky top-0 z-10">
-        <ArrowLeft className="cursor-pointer" onClick={onBack} />
-        <h2 className="text-xl font-bold">Help Center</h2>
+      <header className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4 sticky top-0 z-10">
+        <div className="flex items-center gap-4">
+          <ArrowLeft className="cursor-pointer" onClick={onBack} />
+          <h2 className="text-xl font-bold">Help Center</h2>
+        </div>
+        <button type="button" onClick={onOpenMenu} className="rounded-full p-2 text-primary hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Open menu">
+          <Menu className="size-5" />
+        </button>
       </header>
       <div className="flex-1 overflow-y-auto p-6 space-y-6 no-scrollbar">
         <div className="bg-primary/10 p-6 rounded-3xl border border-primary/20 text-center">
@@ -5136,20 +9659,108 @@ function HelpScreen({ onBack }: { onBack: () => void }) {
           <p className="text-sm text-slate-600 dark:text-slate-400">Search our knowledge base or browse common topics below.</p>
         </div>
 
+        <div className="space-y-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search help articles..."
+              className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-800 dark:bg-slate-900"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: 'all', label: 'All topics' },
+              { id: 'library', label: 'Library' },
+              { id: 'feeds', label: 'Feeds' },
+              { id: 'account', label: 'Account' },
+            ].map(topic => (
+              <button
+                key={topic.id}
+                type="button"
+                onClick={() => setActiveTopic(topic.id as typeof activeTopic)}
+                className={`rounded-full px-4 py-2 text-xs font-bold uppercase tracking-widest transition-colors ${activeTopic === topic.id ? 'bg-primary text-white' : 'bg-white text-slate-500 dark:bg-slate-900 dark:text-slate-300'}`}
+              >
+                {topic.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="space-y-4">
           <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-2">Frequently Asked Questions</h4>
-          {faqs.map((faq, i) => (
+          {filteredFaqs.length > 0 ? filteredFaqs.map((faq, i) => (
             <div key={i} className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
               <p className="text-sm font-bold mb-2">{faq.q}</p>
               <p className="text-xs text-slate-500 leading-relaxed">{faq.a}</p>
+              <button
+                type="button"
+                onClick={faq.onAction}
+                className="mt-3 rounded-full bg-primary/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-primary"
+              >
+                {faq.actionLabel}
+              </button>
             </div>
-          ))}
+          )) : (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center dark:border-slate-700 dark:bg-slate-900">
+              <p className="text-sm font-semibold">No help articles matched that search.</p>
+              <p className="mt-2 text-xs text-slate-500">Try a different keyword or contact support directly.</p>
+            </div>
+          )}
         </div>
 
-        <div className="p-6 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 text-center">
-          <p className="text-sm font-bold mb-4">Still need assistance?</p>
-          <button className="w-full py-3 bg-primary text-white font-bold rounded-xl shadow-lg shadow-primary/20">
-            Chat with Support
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h4 className="text-sm font-bold">Support Requests</h4>
+              <p className="mt-1 text-xs text-slate-500">Your most recent support submissions on this device.</p>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenContact}
+              className="rounded-full bg-primary/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-primary"
+            >
+              Open support
+            </button>
+          </div>
+          <div className="mt-4 space-y-3">
+            {supportTickets.length > 0 ? supportTickets.slice(0, 3).map((ticket) => (
+              <div key={ticket.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold">{ticket.subject}</p>
+                    <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                      {ticket.category} • {ticket.status} • {formatAbsoluteDate(ticket.submittedAt, { month: 'short', day: 'numeric' })}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onOpenContact}
+                    className="rounded-full border border-slate-200 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:border-slate-700"
+                  >
+                    View
+                  </button>
+                </div>
+              </div>
+            )) : (
+              <div className="rounded-2xl border border-dashed border-slate-300 p-5 text-center dark:border-slate-700">
+                <p className="text-sm font-semibold">No support requests yet.</p>
+                <p className="mt-2 text-xs text-slate-500">Use App Contact to submit a bug report or feature request.</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <button type="button" onClick={onOpenMessages} className="rounded-3xl border border-slate-200 bg-white p-6 text-left dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-sm font-bold">Open messages</p>
+            <p className="mt-2 text-xs text-slate-500">Jump back into direct conversations with researchers you already collaborate with.</p>
+          </button>
+          <button type="button" onClick={onOpenContact} className="rounded-3xl bg-primary p-6 text-left text-white shadow-lg shadow-primary/20">
+            <p className="text-sm font-bold">Contact app support</p>
+            <p className="mt-2 text-xs text-white/80">Send a structured bug report or product request to the app team.</p>
           </button>
         </div>
       </div>
@@ -5157,29 +9768,82 @@ function HelpScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-function ContactScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string) => void }) {
-  const [subject, setSubject] = useState('');
-  const [message, setMessage] = useState('');
+function ContactScreen({ currentUser, onBack, onOpenMenu, showToast }: { currentUser: User | null, onBack: () => void, onOpenMenu: () => void, showToast: (msg: string) => void }) {
+  const draft = storageService.getContactDraft();
+  const [category, setCategory] = useState<'bug' | 'feature' | 'account' | 'data'>((draft.category as 'bug' | 'feature' | 'account' | 'data') ?? 'bug');
+  const [subject, setSubject] = useState(draft.subject ?? '');
+  const [message, setMessage] = useState(draft.message ?? '');
+  const [supportTickets, setSupportTickets] = useState<SupportTicket[]>(() => storageService.getSupportTickets());
+
+  useEffect(() => {
+    storageService.saveContactDraft({ category, subject, message });
+  }, [category, subject, message]);
+
+  const openEmailFallback = async (ticket?: SupportTicket) => {
+    const activeCategory = ticket?.category ?? category;
+    const activeSubject = ticket?.subject ?? subject;
+    const activeMessage = ticket?.message ?? message;
+    const referenceLine = ticket ? `\n\nReference: ${ticket.id}` : '';
+    const requesterLine = currentUser?.email ? `\nRequester: ${currentUser.email}` : '';
+    const emailSubject = encodeURIComponent(`[${activeCategory.toUpperCase()}] ${activeSubject}`);
+    const emailBody = encodeURIComponent(`${activeMessage}${referenceLine}${requesterLine}`);
+    window.location.href = `mailto:support@preprint-explorer.local?subject=${emailSubject}&body=${emailBody}`;
+    showToast('Opening your email client with the support draft.');
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    showToast('Message sent! Our team will get back to you soon.');
-    onBack();
+    const ticket: SupportTicket = {
+      id: `support-${Date.now()}`,
+      category,
+      subject: subject.trim(),
+      message: message.trim(),
+      submittedAt: new Date().toISOString(),
+      status: 'submitted',
+      requesterName: currentUser?.name,
+      requesterEmail: currentUser?.email,
+    };
+    const nextTickets = [ticket, ...supportTickets];
+    setSupportTickets(nextTickets);
+    storageService.saveSupportTickets(nextTickets);
+    storageService.clearContactDraft();
+    setCategory('bug');
+    setSubject('');
+    setMessage('');
+    showToast(`Support request submitted (${ticket.id})`);
   };
 
   return (
     <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950">
-      <header className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center gap-4 sticky top-0 z-10">
-        <ArrowLeft className="cursor-pointer" onClick={onBack} />
-        <h2 className="text-xl font-bold">Contact Us</h2>
+      <header className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4 sticky top-0 z-10">
+        <div className="flex items-center gap-4">
+          <ArrowLeft className="cursor-pointer" onClick={onBack} />
+          <h2 className="text-xl font-bold">Contact Us</h2>
+        </div>
+        <button type="button" onClick={onOpenMenu} className="rounded-full p-2 text-primary hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Open menu">
+          <Menu className="size-5" />
+        </button>
       </header>
       <div className="flex-1 overflow-y-auto p-6 no-scrollbar">
         <div className="mb-8">
           <h3 className="text-lg font-bold mb-2">Get in touch</h3>
-          <p className="text-sm text-slate-500">Have a bug to report or a feature request? We'd love to hear from you.</p>
+          <p className="text-sm text-slate-500">Have a bug to report or a feature request? Submit it here and keep a local record of your support requests.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase tracking-widest text-slate-400 px-1">Category</label>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white p-4 text-sm outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-slate-900"
+            >
+              <option value="bug">Bug report</option>
+              <option value="feature">Feature request</option>
+              <option value="account">Account support</option>
+              <option value="data">Data/source issue</option>
+            </select>
+          </div>
           <div className="space-y-2">
             <label className="text-xs font-bold uppercase tracking-widest text-slate-400 px-1">Subject</label>
             <input 
@@ -5206,25 +9870,80 @@ function ContactScreen({ onBack, showToast }: { onBack: () => void, showToast: (
             className="w-full py-4 bg-primary text-white font-bold rounded-2xl shadow-lg shadow-primary/20 flex items-center justify-center gap-2"
           >
             <Mail className="size-5" />
-            Send Message
+            Submit Support Request
+          </button>
+          <button
+            type="button"
+            onClick={() => void openEmailFallback()}
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm font-bold dark:border-slate-700 dark:bg-slate-900"
+          >
+            Email Support Instead
           </button>
         </form>
+
+        <div className="mt-12 rounded-3xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h4 className="text-sm font-bold">Submitted Requests</h4>
+              <p className="mt-1 text-xs text-slate-500">Recent support submissions stored locally on this device.</p>
+            </div>
+            <span className="rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-primary">
+              {supportTickets.length} total
+            </span>
+          </div>
+          <div className="mt-4 space-y-3">
+            {supportTickets.length > 0 ? supportTickets.map((ticket) => (
+              <div key={ticket.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold">{ticket.subject}</p>
+                    <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                      {ticket.category} • {ticket.status} • {formatAbsoluteDate(ticket.submittedAt, { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void copyText(ticket.id).then(() => showToast(`Copied ${ticket.id}`)).catch((error) => showToast(error instanceof Error ? error.message : 'Unable to copy reference'))}
+                    className="rounded-full border border-slate-200 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:border-slate-700"
+                  >
+                    Copy ID
+                  </button>
+                </div>
+                <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{ticket.message}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void openEmailFallback(ticket)}
+                    className="rounded-full bg-primary/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-primary"
+                  >
+                    Email Follow-up
+                  </button>
+                </div>
+              </div>
+            )) : (
+              <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-center dark:border-slate-700">
+                <p className="text-sm font-semibold">No support requests submitted yet.</p>
+                <p className="mt-2 text-xs text-slate-500">Use the form above to create a tracked support request.</p>
+              </div>
+            )}
+          </div>
+        </div>
 
         <div className="mt-12 pt-8 border-t border-slate-200 dark:border-slate-800">
           <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-4 text-center">Other ways to connect</h4>
           <div className="flex justify-center gap-6">
-            <div className="flex flex-col items-center gap-2">
+            <button type="button" onClick={() => window.open('https://twitter.com/intent/tweet?text=' + encodeURIComponent('Feedback for Preprint Explorer'), '_blank', 'noopener,noreferrer')} className="flex flex-col items-center gap-2">
               <div className="size-12 rounded-full bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center text-blue-500">
                 <Twitter className="size-6" />
               </div>
               <span className="text-[10px] font-bold">Twitter</span>
-            </div>
-            <div className="flex flex-col items-center gap-2">
+            </button>
+            <button type="button" onClick={() => window.open(window.location.origin, '_blank', 'noopener,noreferrer')} className="flex flex-col items-center gap-2">
               <div className="size-12 rounded-full bg-slate-50 dark:bg-slate-900/20 flex items-center justify-center text-slate-500">
                 <Globe className="size-6" />
               </div>
               <span className="text-[10px] font-bold">Website</span>
-            </div>
+            </button>
           </div>
         </div>
       </div>

@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: preprint_explorer
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d preprint_explorer"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/preprint_explorer
+      ENABLE_POSTGRES_APP_STORE: "1"
+      INITIAL_ADMIN_EMAIL: aris.thorne@uzh.ch
+      BACKUP_RETENTION_COUNT: "10"
+      BACKUP_UPLOAD_PROVIDER: generic-webhook
+      MONITORING_PROVIDER: generic-webhook
+      MODERATION_AUTO_ASSIGN: "1"
+      MODERATION_AUTO_ESCALATE_REASONS: harassment,misinformation,copyright
+      MODERATION_TARGET_REPORT_ESCALATION_THRESHOLD: "3"
+      WEBAUTHN_RP_ID: localhost
+      WEBAUTHN_ORIGIN: http://localhost:3001
+      APP_URL: http://localhost:3001
+    ports:
+      - "3001:3001"
+    volumes:
+      - app_backups:/app/backups
+      - app_data:/app/server/data
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/api/ready').then(r => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  app_backups:
+  app_data:

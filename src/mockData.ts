@@ -1,28 +1,56 @@
 import { Preprint, Collection, Notification, CustomFeed, TrendMetric, RisingStar, DigestPaper, DigestActivity, User, Institution, Chat } from './types';
 
+const now = new Date();
+
+function relativeDate(minutes: number) {
+  return new Date(now.getTime() - minutes * 60 * 1000);
+}
+
+function relativeLabel(minutes: number) {
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+  if (minutes < 60 * 24) {
+    return `${Math.round(minutes / 60)}h ago`;
+  }
+  if (minutes < 60 * 24 * 7) {
+    return `${Math.round(minutes / (60 * 24))}d ago`;
+  }
+  return `${Math.round(minutes / (60 * 24 * 7))}w ago`;
+}
+
+function messageTime(minutes: number) {
+  const date = relativeDate(minutes);
+  const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays === 1) {
+    return 'Yesterday';
+  }
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
 export const MOCK_CHATS: Chat[] = [
   {
     id: 'chat1',
     participants: ['aris_thorne', 'dr_smith'],
     lastMessage: 'The scaling analysis in Section 4 is particularly insightful.',
-    lastMessageTime: '2h ago',
+    lastMessageTime: relativeLabel(120),
     unreadCount: 1,
     messages: [
-      { id: 'm1', senderId: 'dr_smith', text: 'Hello Dr. Thorne, I read your latest preprint.', timestamp: '10:00 AM' },
-      { id: 'm2', senderId: 'aris_thorne', text: 'Thank you Dr. Smith! Any thoughts on the methodology?', timestamp: '10:05 AM' },
-      { id: 'm3', senderId: 'dr_smith', text: 'The scaling analysis in Section 4 is particularly insightful.', timestamp: '10:15 AM' }
+      { id: 'm1', senderId: 'dr_smith', text: 'Hello Dr. Thorne, I read your latest preprint.', timestamp: messageTime(135) },
+      { id: 'm2', senderId: 'aris_thorne', text: 'Thank you Dr. Smith! Any thoughts on the methodology?', timestamp: messageTime(130) },
+      { id: 'm3', senderId: 'dr_smith', text: 'The scaling analysis in Section 4 is particularly insightful.', timestamp: messageTime(120) }
     ]
   },
   {
     id: 'chat2',
     participants: ['aris_thorne', 'prof_wilson'],
     lastMessage: 'Looking forward to our collaboration.',
-    lastMessageTime: '1d ago',
+    lastMessageTime: relativeLabel(60 * 24),
     unreadCount: 0,
     messages: [
-      { id: 'm4', senderId: 'prof_wilson', text: 'Are you available for a quick call tomorrow?', timestamp: 'Yesterday' },
-      { id: 'm5', senderId: 'aris_thorne', text: 'Yes, around 2 PM works for me.', timestamp: 'Yesterday' },
-      { id: 'm6', senderId: 'prof_wilson', text: 'Looking forward to our collaboration.', timestamp: 'Yesterday' }
+      { id: 'm4', senderId: 'prof_wilson', text: 'Are you available for a quick call tomorrow?', timestamp: messageTime(60 * 24 + 30) },
+      { id: 'm5', senderId: 'aris_thorne', text: 'Yes, around 2 PM works for me.', timestamp: messageTime(60 * 24 + 20) },
+      { id: 'm6', senderId: 'prof_wilson', text: 'Looking forward to our collaboration.', timestamp: messageTime(60 * 24) }
     ]
   }
 ];
@@ -41,8 +69,8 @@ export const MOCK_PREPRINTS: Preprint[] = [
     savesCount: 85,
     type: 'Preprint',
     comments: [
-      { id: 'c1', userId: 'dr_smith', userName: 'Dr. Sarah Smith', userImageUrl: 'https://i.pravatar.cc/150?u=dr_smith', text: 'Excellent theoretical framework. Have you considered the implications for fault-tolerant gates?', date: '2d ago', likes: 12 },
-      { id: 'c2', userId: 'prof_wilson', userName: 'Prof. James Wilson', userImageUrl: 'https://i.pravatar.cc/150?u=prof_wilson', text: 'The scaling analysis in Section 4 is particularly insightful.', date: '1d ago', likes: 5 }
+      { id: 'c1', userId: 'dr_smith', userName: 'Dr. Sarah Smith', userImageUrl: 'https://i.pravatar.cc/150?u=dr_smith', text: 'Excellent theoretical framework. Have you considered the implications for fault-tolerant gates?', date: relativeLabel(60 * 24 * 2), likes: 12 },
+      { id: 'c2', userId: 'prof_wilson', userName: 'Prof. James Wilson', userImageUrl: 'https://i.pravatar.cc/150?u=prof_wilson', text: 'The scaling analysis in Section 4 is particularly insightful.', date: relativeLabel(60 * 24), likes: 5 }
     ],
     citedBy: ['dr_smith', 'prof_wilson', 'Dr. Elena Rodriguez', 'Prof. Mark Thorne'],
     references: ['Quantum Error Correction: A Review', 'Neural Networks and Deep Learning', 'Scalable Quantum Architectures'],
@@ -65,7 +93,7 @@ export const MOCK_PREPRINTS: Preprint[] = [
     savesCount: 124,
     type: 'Peer-Reviewed',
     comments: [
-      { id: 'c3', userId: 'aris_thorne', userName: 'Dr. Aris Thorne', userImageUrl: 'https://picsum.photos/seed/profile/200/200', text: 'The methodology for single-cell isolation is quite robust.', date: '3d ago', likes: 8 }
+      { id: 'c3', userId: 'aris_thorne', userName: 'Dr. Aris Thorne', userImageUrl: 'https://picsum.photos/seed/profile/200/200', text: 'The methodology for single-cell isolation is quite robust.', date: relativeLabel(60 * 24 * 3), likes: 8 }
     ],
     citedBy: ['aris_thorne', 'Dr. Sarah Vance'],
     references: ['Alpine Ecology: An Introduction', 'Genomic Analysis of High-Altitude Plants'],
@@ -153,6 +181,10 @@ export const MOCK_CUSTOM_FEEDS: CustomFeed[] = [
     name: 'Quantum Computing',
     keywords: ['Quantum', 'Qubit', 'Entanglement'],
     sources: ['arXiv', 'Preprints'],
+    sourceCategories: {
+      arXiv: ['quant-ph', 'cs.ET'],
+      Preprints: ['Quantum Computing'],
+    },
     frequency: 'Daily',
     isActive: true
   },
@@ -161,6 +193,10 @@ export const MOCK_CUSTOM_FEEDS: CustomFeed[] = [
     name: 'Open Access Biology',
     keywords: ['Biology', 'Genetics', 'CRISPR'],
     sources: ['bioRxiv', 'OA Journals'],
+    sourceCategories: {
+      bioRxiv: ['Genetics', 'Molecular Biology'],
+      'OA Journals': ['Life Sciences'],
+    },
     frequency: 'Weekly',
     isActive: true
   },
@@ -169,6 +205,10 @@ export const MOCK_CUSTOM_FEEDS: CustomFeed[] = [
     name: 'Neural Networks',
     keywords: ['Neural Networks', 'Deep Learning', 'AI'],
     sources: ['arXiv', 'GitHub'],
+    sourceCategories: {
+      arXiv: ['cs.LG', 'cs.AI'],
+      GitHub: ['Machine Learning'],
+    },
     frequency: 'Real-time',
     isActive: true
   }
@@ -179,27 +219,32 @@ export const MOCK_COLLECTIONS: Collection[] = [
     id: '1',
     name: 'Quantum Research',
     description: 'A collection of papers focusing on quantum entanglement and scalable fault-tolerant architectures.',
+    preprintIds: ['1', '6'],
+    sharedWith: ['s.jenkins@lab.org'],
+    shareLinkToken: 'quantum-research-demo',
     paperCount: 12,
     totalCitations: 1450,
-    updatedAt: '2d ago',
+    updatedAt: relativeLabel(60 * 24 * 2),
     imageUrl: 'https://picsum.photos/seed/quantum/400/400'
   },
   {
     id: '2',
     name: 'Genetics Project',
     description: 'Research related to single-cell sequencing and immune responses in alpine vegetation.',
+    preprintIds: ['2', '5'],
     paperCount: 8,
     totalCitations: 620,
-    updatedAt: '5d ago',
+    updatedAt: relativeLabel(60 * 24 * 5),
     imageUrl: 'https://picsum.photos/seed/genetics/400/400'
   },
   {
     id: '3',
     name: 'Weekend Reading',
     description: 'Interesting preprints to catch up on over the weekend across various disciplines.',
+    preprintIds: ['3', '4', '7'],
     paperCount: 5,
     totalCitations: 125,
-    updatedAt: '1w ago',
+    updatedAt: relativeLabel(60 * 24 * 7),
     imageUrl: 'https://picsum.photos/seed/books/400/400'
   }
 ];
@@ -210,7 +255,7 @@ export const MOCK_NOTIFICATIONS: Notification[] = [
     type: 'feed',
     title: '3 new papers found in "Quantum Computing"',
     description: 'Tap to view the latest research matches in your saved feed.',
-    time: '2m ago',
+    time: relativeLabel(2),
     isNew: true
   },
   {
@@ -218,21 +263,21 @@ export const MOCK_NOTIFICATIONS: Notification[] = [
     type: 'citation',
     title: 'New citation of your work',
     description: 'Your paper "Neural Architectures for Edge Devices" was cited by Dr. Elena Kovac.',
-    time: '3h ago'
+    time: relativeLabel(60 * 3)
   },
   {
     id: '3',
     type: 'collab',
     title: 'Collaborator added a paper',
     description: 'Sarah Miller added "Low-latency Inference" to "Edge Computing Collection".',
-    time: '5h ago'
+    time: relativeLabel(60 * 5)
   },
   {
     id: '4',
     type: 'comment',
     title: 'New comment on your paper',
     description: 'Dr. Aris Thorne: "The glial support mechanism is a fascinating addition to the model."',
-    time: '1h ago',
+    time: relativeLabel(60),
     isNew: true
   },
   {
@@ -240,7 +285,7 @@ export const MOCK_NOTIFICATIONS: Notification[] = [
     type: 'comment',
     title: 'Reply to your comment',
     description: 'Dr. Elena Kovac replied to your comment on "Quantum Error Correction".',
-    time: '45m ago',
+    time: relativeLabel(45),
     isNew: true
   }
 ];
