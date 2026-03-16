@@ -61,10 +61,10 @@ function seedUsers() {
 
   const insert = db.prepare(`
     INSERT INTO users (
-      id, name, email, password_hash, affiliation, institution_id, image_url, bio, title,
+      id, name, email, password_hash, orcid_id, affiliation, institution_id, image_url, bio, title,
       is_email_verified, is_affiliation_verified, is_admin, created_at
     ) VALUES (
-      @id, @name, @email, @password_hash, @affiliation, @institution_id, @image_url, @bio, @title,
+      @id, @name, @email, @password_hash, @orcid_id, @affiliation, @institution_id, @image_url, @bio, @title,
       @is_email_verified, @is_affiliation_verified, @is_admin, @created_at
     )
   `);
@@ -78,6 +78,7 @@ function seedUsers() {
       name: user.name,
       email: user.email ?? `${user.id}@example.com`,
       password_hash: passwordHash,
+      orcid_id: user.orcidId ?? null,
       affiliation: user.affiliation,
       institution_id: user.institutionId ?? null,
       image_url: user.imageUrl,

@@ -7,6 +7,7 @@ export type StoredUser = {
   name: string;
   email: string;
   is_admin: number;
+  orcid_id?: string | null;
   affiliation: string;
   institution_id: string | null;
   image_url: string;
@@ -27,6 +28,8 @@ export type StoredSettings = {
   citation_alerts: number;
   product_updates: number;
   delivery_day: string;
+  last_daily_digest_sent_at?: string | null;
+  last_weekly_digest_sent_at?: string | null;
   profile_visibility: 'public' | 'followers' | 'private';
   message_privacy: 'everyone' | 'followers' | 'nobody';
   share_privacy: 'everyone' | 'followers' | 'nobody';
@@ -42,13 +45,51 @@ export type StoredChatMessage = {
 export type StoredNotification = {
   id: string;
   user_id: string;
-  type: 'feed' | 'citation' | 'collab' | 'share' | 'comment';
+  type: 'feed' | 'citation' | 'collab' | 'share' | 'comment' | 'product' | 'message' | 'moderation' | 'account';
   title: string;
   description: string;
   created_at: string;
   read_at: string | null;
   action_url: string | null;
   actor_user_id: string | null;
+};
+
+export type StoredPushSubscription = {
+  id: string;
+  user_id: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StoredProductAnnouncement = {
+  id: string;
+  title: string;
+  message: string;
+  action_url: string | null;
+  created_by_user_id: string;
+  created_at: string;
+};
+
+export type StoredCollection = {
+  id: string;
+  owner_user_id: string;
+  name: string;
+  description: string | null;
+  image_url: string;
+  share_link_token: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StoredCollectionCollaborator = {
+  collection_id: string;
+  email: string;
+  role: 'viewer' | 'editor';
+  created_at: string;
+  updated_at: string;
 };
 
 export type StoredSavedSearch = {
@@ -110,6 +151,7 @@ type CoreStore = {
     name: string;
     email: string;
     passwordHash: string;
+    orcidId?: string | null;
     affiliation: string;
     institutionId?: string | null;
     imageUrl: string;
@@ -126,6 +168,7 @@ type CoreStore = {
     userId: string;
     name: string;
     email: string;
+    orcidId?: string | null;
     affiliation: string;
     bio: string;
     title: string;
@@ -148,8 +191,11 @@ type CoreStore = {
     messagePrivacy: 'everyone' | 'followers' | 'nobody';
     sharePrivacy: 'everyone' | 'followers' | 'nobody';
   }) => Promise<void>;
+  markDigestDelivered: (userId: string, kind: 'daily' | 'weekly', sentAt: string) => Promise<void>;
   getFollowerCounts: () => Promise<Map<string, number>>;
   getFollowingCounts: () => Promise<Map<string, number>>;
+  listFollowerIdsByUserId: (userId: string) => Promise<string[]>;
+  listFollowingIdsByUserId: (userId: string) => Promise<string[]>;
   isFollowing: (viewerId: string, targetUserId: string) => Promise<boolean>;
   createFollow: (followerId: string, followingId: string, createdAt: string) => Promise<void>;
   deleteFollow: (followerId: string, followingId: string) => Promise<void>;
@@ -165,7 +211,7 @@ type CoreStore = {
   listNotificationsByUserId: (userId: string, limit?: number) => Promise<StoredNotification[]>;
   createNotification: (input: {
     userId: string;
-    type: 'feed' | 'citation' | 'collab' | 'share' | 'comment';
+    type: 'feed' | 'citation' | 'collab' | 'share' | 'comment' | 'product' | 'message' | 'moderation' | 'account';
     title: string;
     description: string;
     createdAt: string;
@@ -176,6 +222,52 @@ type CoreStore = {
   markNotificationRead: (userId: string, notificationId: string) => Promise<void>;
   countUnreadNotificationsByActionUrl: (userId: string, actionUrl: string) => Promise<number>;
   markNotificationsReadByActionUrl: (userId: string, actionUrl: string) => Promise<void>;
+  upsertPushSubscription: (input: {
+    userId: string;
+    endpoint: string;
+    p256dh: string;
+    auth: string;
+  }) => Promise<void>;
+  deletePushSubscription: (userId: string, endpoint: string) => Promise<void>;
+  listPushSubscriptionsByUserIds: (userIds: string[]) => Promise<StoredPushSubscription[]>;
+  createProductAnnouncement: (input: {
+    title: string;
+    message: string;
+    actionUrl?: string | null;
+    createdByUserId: string;
+    createdAt: string;
+  }) => Promise<StoredProductAnnouncement>;
+  listProductAnnouncements: (limit?: number) => Promise<StoredProductAnnouncement[]>;
+  listCollectionsForUser: (userId: string, email?: string | null) => Promise<StoredCollection[]>;
+  findCollectionById: (collectionId: string) => Promise<StoredCollection | undefined>;
+  listCollectionCollaborators: (collectionIds: string[]) => Promise<StoredCollectionCollaborator[]>;
+  listCollectionPreprintIds: (collectionIds: string[]) => Promise<Array<{ collection_id: string; preprint_id: string }>>;
+  createCollection: (input: {
+    ownerUserId: string;
+    name: string;
+    description?: string | null;
+    imageUrl: string;
+    shareLinkToken: string;
+    createdAt: string;
+  }) => Promise<StoredCollection>;
+  updateCollectionMetadata: (input: {
+    collectionId: string;
+    ownerUserId: string;
+    name: string;
+    description?: string | null;
+    imageUrl: string;
+    updatedAt: string;
+  }) => Promise<StoredCollection | undefined>;
+  replaceCollectionPreprintIds: (input: {
+    collectionId: string;
+    preprintIds: string[];
+    updatedAt: string;
+  }) => Promise<void>;
+  replaceCollectionCollaborators: (input: {
+    collectionId: string;
+    collaborators: Array<{ email: string; role: 'viewer' | 'editor' }>;
+    updatedAt: string;
+  }) => Promise<void>;
   listSavedSearchesByUserId: (userId: string) => Promise<StoredSavedSearch[]>;
   upsertSavedSearch: (input: {
     userId: string;
@@ -255,14 +347,15 @@ function createSqliteStore(): CoreStore {
     async createUser(input) {
       db.prepare(`
         INSERT INTO users (
-          id, name, email, password_hash, affiliation, institution_id, image_url, bio, title,
+          id, name, email, password_hash, orcid_id, affiliation, institution_id, image_url, bio, title,
           is_email_verified, is_affiliation_verified, is_admin, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.id,
         input.name,
         input.email,
         input.passwordHash,
+        input.orcidId ?? null,
         input.affiliation,
         input.institutionId ?? null,
         input.imageUrl,
@@ -290,11 +383,12 @@ function createSqliteStore(): CoreStore {
     async updateUserProfile(input) {
       db.prepare(`
         UPDATE users
-        SET name = ?, email = ?, affiliation = ?, bio = ?, title = ?, image_url = ?, is_email_verified = ?, is_affiliation_verified = ?
+        SET name = ?, email = ?, orcid_id = ?, affiliation = ?, bio = ?, title = ?, image_url = ?, is_email_verified = ?, is_affiliation_verified = ?
         WHERE id = ?
       `).run(
         input.name,
         input.email,
+        input.orcidId ?? null,
         input.affiliation,
         input.bio,
         input.title,
@@ -309,8 +403,8 @@ function createSqliteStore(): CoreStore {
       db.prepare(`
       INSERT OR IGNORE INTO user_settings (
         user_id, push_enabled, email_enabled, daily_digest, weekly_digest, new_publications,
-        citation_alerts, product_updates, delivery_day, profile_visibility, message_privacy, share_privacy
-      ) VALUES (?, 1, 1, 1, 1, 1, 1, 0, 'Friday', 'public', 'everyone', 'everyone')
+        citation_alerts, product_updates, delivery_day, last_daily_digest_sent_at, last_weekly_digest_sent_at, profile_visibility, message_privacy, share_privacy
+      ) VALUES (?, 1, 1, 1, 1, 1, 1, 0, 'Friday', NULL, NULL, 'public', 'everyone', 'everyone')
       `).run(userId);
     },
 
@@ -332,8 +426,8 @@ function createSqliteStore(): CoreStore {
         profile_visibility = ?,
         message_privacy = ?,
         share_privacy = ?
-      WHERE user_id = ?
-    `).run(
+        WHERE user_id = ?
+      `).run(
       settings.pushEnabled ? 1 : 0,
         settings.emailEnabled ? 1 : 0,
         settings.dailyDigest ? 1 : 0,
@@ -344,10 +438,15 @@ function createSqliteStore(): CoreStore {
       settings.deliveryDay,
       settings.profileVisibility,
       settings.messagePrivacy,
-      settings.sharePrivacy,
-      userId,
-    );
-  },
+        settings.sharePrivacy,
+        userId,
+      );
+    },
+
+    async markDigestDelivered(userId: string, kind: 'daily' | 'weekly', sentAt: string) {
+      const column = kind === 'daily' ? 'last_daily_digest_sent_at' : 'last_weekly_digest_sent_at';
+      db.prepare(`UPDATE user_settings SET ${column} = ? WHERE user_id = ?`).run(sentAt, userId);
+    },
 
     async getFollowerCounts() {
       const rows = db.prepare(`
@@ -365,6 +464,26 @@ function createSqliteStore(): CoreStore {
         GROUP BY follower_id
       `).all() as Array<{ user_id: string; following: number }>;
       return new Map(rows.map((row) => [row.user_id, row.following]));
+    },
+
+    async listFollowerIdsByUserId(userId: string) {
+      const rows = db.prepare(`
+        SELECT follower_id as user_id
+        FROM follows
+        WHERE following_id = ?
+        ORDER BY created_at DESC
+      `).all(userId) as Array<{ user_id: string }>;
+      return rows.map((row) => row.user_id);
+    },
+
+    async listFollowingIdsByUserId(userId: string) {
+      const rows = db.prepare(`
+        SELECT following_id as user_id
+        FROM follows
+        WHERE follower_id = ?
+        ORDER BY created_at DESC
+      `).all(userId) as Array<{ user_id: string }>;
+      return rows.map((row) => row.user_id);
     },
 
     async isFollowing(viewerId: string, targetUserId: string) {
@@ -492,6 +611,202 @@ function createSqliteStore(): CoreStore {
         SET read_at = ?
         WHERE user_id = ? AND action_url = ? AND read_at IS NULL
       `).run(now(), userId, actionUrl);
+    },
+
+    async upsertPushSubscription(input) {
+      const existing = db.prepare(`
+        SELECT id, created_at
+        FROM push_subscriptions
+        WHERE user_id = ? AND endpoint = ?
+      `).get(input.userId, input.endpoint) as { id: string; created_at: string } | undefined;
+      db.prepare(`
+        INSERT INTO push_subscriptions (
+          id, user_id, endpoint, p256dh, auth, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, endpoint) DO UPDATE SET
+          p256dh = excluded.p256dh,
+          auth = excluded.auth,
+          updated_at = excluded.updated_at
+      `).run(
+        existing?.id ?? crypto.randomUUID(),
+        input.userId,
+        input.endpoint,
+        input.p256dh,
+        input.auth,
+        existing?.created_at ?? now(),
+        now(),
+      );
+    },
+
+    async deletePushSubscription(userId: string, endpoint: string) {
+      db.prepare('DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?').run(userId, endpoint);
+    },
+
+    async listPushSubscriptionsByUserIds(userIds: string[]) {
+      if (userIds.length === 0) {
+        return [];
+      }
+      const placeholders = userIds.map(() => '?').join(', ');
+      return db.prepare(`
+        SELECT id, user_id, endpoint, p256dh, auth, created_at, updated_at
+        FROM push_subscriptions
+        WHERE user_id IN (${placeholders})
+      `).all(...userIds) as StoredPushSubscription[];
+    },
+
+    async createProductAnnouncement(input) {
+      const record: StoredProductAnnouncement = {
+        id: crypto.randomUUID(),
+        title: input.title,
+        message: input.message,
+        action_url: input.actionUrl ?? null,
+        created_by_user_id: input.createdByUserId,
+        created_at: input.createdAt,
+      };
+      db.prepare(`
+        INSERT INTO product_announcements (
+          id, title, message, action_url, created_by_user_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        record.id,
+        record.title,
+        record.message,
+        record.action_url,
+        record.created_by_user_id,
+        record.created_at,
+      );
+      return record;
+    },
+
+    async listProductAnnouncements(limit = 20) {
+      return db.prepare(`
+        SELECT id, title, message, action_url, created_by_user_id, created_at
+        FROM product_announcements
+        ORDER BY created_at DESC
+        LIMIT ?
+      `).all(limit) as StoredProductAnnouncement[];
+    },
+
+    async listCollectionsForUser(userId: string, email?: string | null) {
+      if (email) {
+        return db.prepare(`
+          SELECT DISTINCT c.*
+          FROM collections c
+          LEFT JOIN collection_collaborators cc ON cc.collection_id = c.id
+          WHERE c.owner_user_id = ? OR lower(cc.email) = lower(?)
+          ORDER BY c.updated_at DESC
+        `).all(userId, email) as StoredCollection[];
+      }
+      return db.prepare(`
+        SELECT *
+        FROM collections
+        WHERE owner_user_id = ?
+        ORDER BY updated_at DESC
+      `).all(userId) as StoredCollection[];
+    },
+
+    async findCollectionById(collectionId: string) {
+      return db.prepare('SELECT * FROM collections WHERE id = ?').get(collectionId) as StoredCollection | undefined;
+    },
+
+    async listCollectionCollaborators(collectionIds: string[]) {
+      if (collectionIds.length === 0) {
+        return [];
+      }
+      const placeholders = collectionIds.map(() => '?').join(', ');
+      return db.prepare(`
+        SELECT collection_id, email, role, created_at, updated_at
+        FROM collection_collaborators
+        WHERE collection_id IN (${placeholders})
+        ORDER BY updated_at DESC
+      `).all(...collectionIds) as StoredCollectionCollaborator[];
+    },
+
+    async listCollectionPreprintIds(collectionIds: string[]) {
+      if (collectionIds.length === 0) {
+        return [];
+      }
+      const placeholders = collectionIds.map(() => '?').join(', ');
+      return db.prepare(`
+        SELECT collection_id, preprint_id
+        FROM collection_preprints
+        WHERE collection_id IN (${placeholders})
+        ORDER BY position ASC, created_at ASC
+      `).all(...collectionIds) as Array<{ collection_id: string; preprint_id: string }>;
+    },
+
+    async createCollection(input) {
+      const record: StoredCollection = {
+        id: crypto.randomUUID(),
+        owner_user_id: input.ownerUserId,
+        name: input.name,
+        description: input.description ?? null,
+        image_url: input.imageUrl,
+        share_link_token: input.shareLinkToken,
+        created_at: input.createdAt,
+        updated_at: input.createdAt,
+      };
+      db.prepare(`
+        INSERT INTO collections (
+          id, owner_user_id, name, description, image_url, share_link_token, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        record.id,
+        record.owner_user_id,
+        record.name,
+        record.description,
+        record.image_url,
+        record.share_link_token,
+        record.created_at,
+        record.updated_at,
+      );
+      return record;
+    },
+
+    async updateCollectionMetadata(input) {
+      db.prepare(`
+        UPDATE collections
+        SET name = ?, description = ?, image_url = ?, updated_at = ?
+        WHERE id = ? AND owner_user_id = ?
+      `).run(
+        input.name,
+        input.description ?? null,
+        input.imageUrl,
+        input.updatedAt,
+        input.collectionId,
+        input.ownerUserId,
+      );
+      return db.prepare('SELECT * FROM collections WHERE id = ?').get(input.collectionId) as StoredCollection | undefined;
+    },
+
+    async replaceCollectionPreprintIds(input) {
+      const transaction = db.transaction(() => {
+        db.prepare('DELETE FROM collection_preprints WHERE collection_id = ?').run(input.collectionId);
+        const insert = db.prepare(`
+          INSERT INTO collection_preprints (collection_id, preprint_id, position, created_at)
+          VALUES (?, ?, ?, ?)
+        `);
+        input.preprintIds.forEach((preprintId, index) => {
+          insert.run(input.collectionId, preprintId, index, input.updatedAt);
+        });
+        db.prepare('UPDATE collections SET updated_at = ? WHERE id = ?').run(input.updatedAt, input.collectionId);
+      });
+      transaction();
+    },
+
+    async replaceCollectionCollaborators(input) {
+      const transaction = db.transaction(() => {
+        db.prepare('DELETE FROM collection_collaborators WHERE collection_id = ?').run(input.collectionId);
+        const insert = db.prepare(`
+          INSERT INTO collection_collaborators (collection_id, email, role, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?)
+        `);
+        input.collaborators.forEach((collaborator) => {
+          insert.run(input.collectionId, collaborator.email.toLowerCase(), collaborator.role, input.updatedAt, input.updatedAt);
+        });
+        db.prepare('UPDATE collections SET updated_at = ? WHERE id = ?').run(input.updatedAt, input.collectionId);
+      });
+      transaction();
     },
 
     async listSavedSearchesByUserId(userId: string) {
@@ -740,6 +1055,7 @@ function createPostgresStore(databaseUrl: string): CoreStore {
           email TEXT NOT NULL UNIQUE,
           is_admin INTEGER DEFAULT 0,
           password_hash TEXT NOT NULL,
+          orcid_id TEXT,
           affiliation TEXT NOT NULL,
           institution_id TEXT,
           image_url TEXT NOT NULL,
@@ -766,6 +1082,8 @@ function createPostgresStore(databaseUrl: string): CoreStore {
           share_privacy TEXT NOT NULL DEFAULT 'everyone'
         );
       `);
+      await pool.query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_daily_digest_sent_at TIMESTAMPTZ`);
+      await pool.query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_weekly_digest_sent_at TIMESTAMPTZ`);
       await pool.query(`
         CREATE TABLE IF NOT EXISTS follows (
           follower_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -816,6 +1134,59 @@ function createPostgresStore(databaseUrl: string): CoreStore {
           read_at TIMESTAMPTZ,
           action_url TEXT,
           actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL
+        );
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          endpoint TEXT NOT NULL,
+          p256dh TEXT NOT NULL,
+          auth TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL,
+          UNIQUE (user_id, endpoint)
+        );
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS product_announcements (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          message TEXT NOT NULL,
+          action_url TEXT,
+          created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          created_at TIMESTAMPTZ NOT NULL
+        );
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS collections (
+          id TEXT PRIMARY KEY,
+          owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          description TEXT,
+          image_url TEXT NOT NULL,
+          share_link_token TEXT NOT NULL UNIQUE,
+          created_at TIMESTAMPTZ NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL
+        );
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS collection_preprints (
+          collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+          preprint_id TEXT NOT NULL,
+          position INTEGER NOT NULL DEFAULT 0,
+          created_at TIMESTAMPTZ NOT NULL,
+          PRIMARY KEY (collection_id, preprint_id)
+        );
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS collection_collaborators (
+          collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+          email TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'editor',
+          created_at TIMESTAMPTZ NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL,
+          PRIMARY KEY (collection_id, email)
         );
       `);
       await pool.query(`
@@ -879,11 +1250,14 @@ function createPostgresStore(databaseUrl: string): CoreStore {
       await pool.query('CREATE INDEX IF NOT EXISTS idx_follows_following_id_pg ON follows(following_id)');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_created_pg ON messages(chat_id, created_at)');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_notifications_user_created_pg ON notifications(user_id, created_at DESC)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_collections_owner_updated_pg ON collections(owner_user_id, updated_at DESC)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_collection_collaborators_email_pg ON collection_collaborators(lower(email))');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_saved_searches_user_updated_pg ON saved_searches(user_id, updated_at DESC)');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_search_analytics_count_pg ON search_analytics(search_count DESC, last_searched_at DESC)');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_moderation_reports_reporter_pg ON moderation_reports(reporter_user_id, created_at DESC)');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_moderation_actions_report_created_pg ON moderation_actions(report_id, created_at DESC)');
       await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin INTEGER DEFAULT 0');
+      await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS orcid_id TEXT');
       await pool.query('ALTER TABLE moderation_reports ADD COLUMN IF NOT EXISTS assigned_to_user_id TEXT');
       await pool.query('ALTER TABLE moderation_reports ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ');
       await pool.query('ALTER TABLE moderation_reports ADD COLUMN IF NOT EXISTS escalation_reason TEXT');
@@ -895,7 +1269,7 @@ function createPostgresStore(databaseUrl: string): CoreStore {
     async findUserById(id: string) {
       const result = await pool.query<StoredUser>(`
         SELECT
-          id, name, email, is_admin, affiliation, institution_id, image_url, bio, title,
+          id, name, email, is_admin, orcid_id, affiliation, institution_id, image_url, bio, title,
           is_email_verified, is_affiliation_verified, created_at::text, password_hash
         FROM users
         WHERE id = $1
@@ -906,7 +1280,7 @@ function createPostgresStore(databaseUrl: string): CoreStore {
     async findUserByEmail(email: string) {
       const result = await pool.query<StoredUser>(`
         SELECT
-          id, name, email, is_admin, affiliation, institution_id, image_url, bio, title,
+          id, name, email, is_admin, orcid_id, affiliation, institution_id, image_url, bio, title,
           is_email_verified, is_affiliation_verified, created_at::text, password_hash
         FROM users
         WHERE email = $1
@@ -917,7 +1291,7 @@ function createPostgresStore(databaseUrl: string): CoreStore {
     async listUsers() {
       const result = await pool.query<StoredUser>(`
         SELECT
-          id, name, email, is_admin, affiliation, institution_id, image_url, bio, title,
+          id, name, email, is_admin, orcid_id, affiliation, institution_id, image_url, bio, title,
           is_email_verified, is_affiliation_verified, created_at::text, password_hash
         FROM users
         ORDER BY name ASC
@@ -928,14 +1302,15 @@ function createPostgresStore(databaseUrl: string): CoreStore {
     async createUser(input) {
       await pool.query(`
         INSERT INTO users (
-          id, name, email, password_hash, affiliation, institution_id, image_url, bio, title,
+          id, name, email, password_hash, orcid_id, affiliation, institution_id, image_url, bio, title,
           is_email_verified, is_affiliation_verified, is_admin, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::timestamptz)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::timestamptz)
       `, [
         input.id,
         input.name,
         input.email,
         input.passwordHash,
+        input.orcidId ?? null,
         input.affiliation,
         input.institutionId ?? null,
         input.imageUrl,
@@ -966,16 +1341,18 @@ function createPostgresStore(databaseUrl: string): CoreStore {
         SET
           name = $1,
           email = $2,
-          affiliation = $3,
-          bio = $4,
-          title = $5,
-          image_url = $6,
-          is_email_verified = $7,
-          is_affiliation_verified = $8
-        WHERE id = $9
+          orcid_id = $3,
+          affiliation = $4,
+          bio = $5,
+          title = $6,
+          image_url = $7,
+          is_email_verified = $8,
+          is_affiliation_verified = $9
+        WHERE id = $10
       `, [
         input.name,
         input.email,
+        input.orcidId ?? null,
         input.affiliation,
         input.bio,
         input.title,
@@ -990,8 +1367,8 @@ function createPostgresStore(databaseUrl: string): CoreStore {
       await pool.query(`
         INSERT INTO user_settings (
           user_id, push_enabled, email_enabled, daily_digest, weekly_digest, new_publications,
-          citation_alerts, product_updates, delivery_day, profile_visibility, message_privacy, share_privacy
-        ) VALUES ($1, 1, 1, 1, 1, 1, 1, 0, 'Friday', 'public', 'everyone', 'everyone')
+          citation_alerts, product_updates, delivery_day, last_daily_digest_sent_at, last_weekly_digest_sent_at, profile_visibility, message_privacy, share_privacy
+        ) VALUES ($1, 1, 1, 1, 1, 1, 1, 0, 'Friday', NULL, NULL, 'public', 'everyone', 'everyone')
         ON CONFLICT (user_id) DO NOTHING
       `, [userId]);
     },
@@ -1000,7 +1377,8 @@ function createPostgresStore(databaseUrl: string): CoreStore {
       const result = await pool.query<StoredSettings>(`
         SELECT
           push_enabled, email_enabled, daily_digest, weekly_digest, new_publications,
-          citation_alerts, product_updates, delivery_day, profile_visibility, message_privacy, share_privacy
+          citation_alerts, product_updates, delivery_day, last_daily_digest_sent_at, last_weekly_digest_sent_at,
+          profile_visibility, message_privacy, share_privacy
         FROM user_settings
         WHERE user_id = $1
       `, [userId]);
@@ -1038,6 +1416,11 @@ function createPostgresStore(databaseUrl: string): CoreStore {
       ]);
     },
 
+    async markDigestDelivered(userId: string, kind: 'daily' | 'weekly', sentAt: string) {
+      const column = kind === 'daily' ? 'last_daily_digest_sent_at' : 'last_weekly_digest_sent_at';
+      await pool.query(`UPDATE user_settings SET ${column} = $1 WHERE user_id = $2`, [sentAt, userId]);
+    },
+
     async getFollowerCounts() {
       const result = await pool.query<Array<{ user_id: string; followers: number | string }>[number]>(`
         SELECT following_id as user_id, COUNT(*) as followers
@@ -1054,6 +1437,26 @@ function createPostgresStore(databaseUrl: string): CoreStore {
         GROUP BY follower_id
       `);
       return new Map(result.rows.map((row) => [row.user_id, toInt(row.following)]));
+    },
+
+    async listFollowerIdsByUserId(userId: string) {
+      const result = await pool.query<Array<{ user_id: string }>[number]>(`
+        SELECT follower_id as user_id
+        FROM follows
+        WHERE following_id = $1
+        ORDER BY created_at DESC
+      `, [userId]);
+      return result.rows.map((row) => row.user_id);
+    },
+
+    async listFollowingIdsByUserId(userId: string) {
+      const result = await pool.query<Array<{ user_id: string }>[number]>(`
+        SELECT following_id as user_id
+        FROM follows
+        WHERE follower_id = $1
+        ORDER BY created_at DESC
+      `, [userId]);
+      return result.rows.map((row) => row.user_id);
     },
 
     async isFollowing(viewerId: string, targetUserId: string) {
@@ -1220,6 +1623,206 @@ function createPostgresStore(databaseUrl: string): CoreStore {
         SET read_at = NOW()
         WHERE user_id = $1 AND action_url = $2 AND read_at IS NULL
       `, [userId, actionUrl]);
+    },
+
+    async upsertPushSubscription(input) {
+      await pool.query(`
+        INSERT INTO push_subscriptions (
+          id, user_id, endpoint, p256dh, auth, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+        ON CONFLICT (user_id, endpoint) DO UPDATE SET
+          p256dh = EXCLUDED.p256dh,
+          auth = EXCLUDED.auth,
+          updated_at = NOW()
+      `, [
+        crypto.randomUUID(),
+        input.userId,
+        input.endpoint,
+        input.p256dh,
+        input.auth,
+      ]);
+    },
+
+    async deletePushSubscription(userId: string, endpoint: string) {
+      await pool.query('DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = $2', [userId, endpoint]);
+    },
+
+    async listPushSubscriptionsByUserIds(userIds: string[]) {
+      if (userIds.length === 0) {
+        return [];
+      }
+      const result = await pool.query<StoredPushSubscription>(`
+        SELECT id, user_id, endpoint, p256dh, auth, created_at::text, updated_at::text
+        FROM push_subscriptions
+        WHERE user_id = ANY($1::text[])
+      `, [userIds]);
+      return result.rows;
+    },
+
+    async createProductAnnouncement(input) {
+      const id = crypto.randomUUID();
+      const result = await pool.query<StoredProductAnnouncement>(`
+        INSERT INTO product_announcements (
+          id, title, message, action_url, created_by_user_id, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6::timestamptz)
+        RETURNING id, title, message, action_url, created_by_user_id, created_at::text
+      `, [
+        id,
+        input.title,
+        input.message,
+        input.actionUrl ?? null,
+        input.createdByUserId,
+        input.createdAt,
+      ]);
+      return result.rows[0];
+    },
+
+    async listProductAnnouncements(limit = 20) {
+      const result = await pool.query<StoredProductAnnouncement>(`
+        SELECT id, title, message, action_url, created_by_user_id, created_at::text
+        FROM product_announcements
+        ORDER BY created_at DESC
+        LIMIT $1
+      `, [limit]);
+      return result.rows;
+    },
+
+    async listCollectionsForUser(userId: string, email?: string | null) {
+      const params: Array<string> = [userId];
+      let query = `
+        SELECT DISTINCT
+          c.id,
+          c.owner_user_id,
+          c.name,
+          c.description,
+          c.image_url,
+          c.share_link_token,
+          c.created_at::text,
+          c.updated_at::text
+        FROM collections c
+        LEFT JOIN collection_collaborators cc ON cc.collection_id = c.id
+        WHERE c.owner_user_id = $1
+      `;
+      if (email) {
+        params.push(email);
+        query += ` OR lower(cc.email) = lower($2)`;
+      }
+      query += ' ORDER BY c.updated_at DESC';
+      const result = await pool.query<StoredCollection>(query, params);
+      return result.rows;
+    },
+
+    async findCollectionById(collectionId: string) {
+      const result = await pool.query<StoredCollection>(`
+        SELECT id, owner_user_id, name, description, image_url, share_link_token, created_at::text, updated_at::text
+        FROM collections
+        WHERE id = $1
+      `, [collectionId]);
+      return result.rows[0];
+    },
+
+    async listCollectionCollaborators(collectionIds: string[]) {
+      if (collectionIds.length === 0) {
+        return [];
+      }
+      const result = await pool.query<StoredCollectionCollaborator>(`
+        SELECT collection_id, email, role, created_at::text, updated_at::text
+        FROM collection_collaborators
+        WHERE collection_id = ANY($1::text[])
+        ORDER BY updated_at DESC
+      `, [collectionIds]);
+      return result.rows;
+    },
+
+    async listCollectionPreprintIds(collectionIds: string[]) {
+      if (collectionIds.length === 0) {
+        return [];
+      }
+      const result = await pool.query<Array<{ collection_id: string; preprint_id: string }>[number]>(`
+        SELECT collection_id, preprint_id
+        FROM collection_preprints
+        WHERE collection_id = ANY($1::text[])
+        ORDER BY position ASC, created_at ASC
+      `, [collectionIds]);
+      return result.rows;
+    },
+
+    async createCollection(input) {
+      const id = crypto.randomUUID();
+      const result = await pool.query<StoredCollection>(`
+        INSERT INTO collections (
+          id, owner_user_id, name, description, image_url, share_link_token, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $7::timestamptz)
+        RETURNING id, owner_user_id, name, description, image_url, share_link_token, created_at::text, updated_at::text
+      `, [
+        id,
+        input.ownerUserId,
+        input.name,
+        input.description ?? null,
+        input.imageUrl,
+        input.shareLinkToken,
+        input.createdAt,
+      ]);
+      return result.rows[0];
+    },
+
+    async updateCollectionMetadata(input) {
+      const result = await pool.query<StoredCollection>(`
+        UPDATE collections
+        SET name = $1, description = $2, image_url = $3, updated_at = $4::timestamptz
+        WHERE id = $5 AND owner_user_id = $6
+        RETURNING id, owner_user_id, name, description, image_url, share_link_token, created_at::text, updated_at::text
+      `, [
+        input.name,
+        input.description ?? null,
+        input.imageUrl,
+        input.updatedAt,
+        input.collectionId,
+        input.ownerUserId,
+      ]);
+      return result.rows[0];
+    },
+
+    async replaceCollectionPreprintIds(input) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('DELETE FROM collection_preprints WHERE collection_id = $1', [input.collectionId]);
+        for (const [index, preprintId] of input.preprintIds.entries()) {
+          await client.query(`
+            INSERT INTO collection_preprints (collection_id, preprint_id, position, created_at)
+            VALUES ($1, $2, $3, $4::timestamptz)
+          `, [input.collectionId, preprintId, index, input.updatedAt]);
+        }
+        await client.query('UPDATE collections SET updated_at = $1::timestamptz WHERE id = $2', [input.updatedAt, input.collectionId]);
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async replaceCollectionCollaborators(input) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('DELETE FROM collection_collaborators WHERE collection_id = $1', [input.collectionId]);
+        for (const collaborator of input.collaborators) {
+          await client.query(`
+            INSERT INTO collection_collaborators (collection_id, email, role, created_at, updated_at)
+            VALUES ($1, $2, $3, $4::timestamptz, $4::timestamptz)
+          `, [input.collectionId, collaborator.email.toLowerCase(), collaborator.role, input.updatedAt]);
+        }
+        await client.query('UPDATE collections SET updated_at = $1::timestamptz WHERE id = $2', [input.updatedAt, input.collectionId]);
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
     },
 
     async listSavedSearchesByUserId(userId: string) {

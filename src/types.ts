@@ -15,6 +15,7 @@ export interface Preprint {
   source: string;
   date: string;
   publishedAt?: string;
+  savedAt?: string;
   tags: string[];
   abstract: string;
   isSaved?: boolean;
@@ -90,6 +91,7 @@ export interface User {
   name: string;
   title?: string;
   email?: string;
+  orcidId?: string;
   isAdmin?: boolean;
   isEmailVerified?: boolean;
   isAffiliationVerified?: boolean;
@@ -167,6 +169,7 @@ export interface Institution {
   name: string;
   location: string;
   imageUrl: string;
+  homepageUrl?: string;
   description: string;
   stats: {
     researchers: number;
@@ -179,7 +182,12 @@ export interface Collection {
   id: string;
   name: string;
   description?: string;
+  ownerId?: string;
   preprintIds?: string[];
+  collaborators?: Array<{
+    email: string;
+    role: 'viewer' | 'editor';
+  }>;
   sharedWith?: string[];
   shareLinkToken?: string;
   paperCount: number;
@@ -200,7 +208,7 @@ export interface CustomFeed {
 
 export interface Notification {
   id: string;
-  type: 'feed' | 'citation' | 'collab' | 'share' | 'comment';
+  type: 'feed' | 'citation' | 'collab' | 'share' | 'comment' | 'product' | 'message' | 'moderation' | 'account';
   title: string;
   description: string;
   time: string;
@@ -217,6 +225,16 @@ export interface SupportTicket {
   status: 'submitted' | 'queued';
   requesterName?: string;
   requesterEmail?: string;
+}
+
+export interface ProductAnnouncement {
+  id: string;
+  title: string;
+  message: string;
+  actionUrl?: string;
+  createdByUserId: string;
+  createdByName: string;
+  createdAt: string;
 }
 
 export interface ModerationReport {

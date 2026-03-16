@@ -255,7 +255,22 @@ function normalizeCollection(input: unknown, index: number, preprints: Preprint[
     id: toStringValue(item.id, titleToId(name, 'collection', index)),
     name,
     description: toStringValue(item.description, 'Imported collection'),
+    ownerId: toStringValue(item.ownerId),
     preprintIds,
+    collaborators: toArray(item.collaborators)
+      .map((entry) => {
+        const collaborator = isRecord(entry) ? entry : {};
+        const email = toStringValue(collaborator.email).toLowerCase();
+        if (!email) {
+          return null;
+        }
+        const role = toStringValue(collaborator.role, 'editor');
+        return {
+          email,
+          role: role === 'viewer' ? 'viewer' as const : 'editor' as const,
+        };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)),
     sharedWith: toStringList(item.sharedWith),
     shareLinkToken: toStringValue(item.shareLinkToken),
     paperCount: toNumberValue(item.paperCount, collectionPapers.length),

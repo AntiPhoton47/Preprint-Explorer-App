@@ -16,6 +16,7 @@ type TopicPreference = {
 
 type ProfileCustomization = {
   manualPublicationIds: string[];
+  hiddenPublicationIds: string[];
   networkLabels: string[];
 };
 
@@ -34,7 +35,25 @@ export const storageService = {
   getSavedPreprints: (): Preprint[] => {
     try {
       const saved = localStorage.getItem(SAVED_PREPRINTS_KEY);
-      return saved ? JSON.parse(saved) : [];
+      const parsed = saved ? JSON.parse(saved) : [];
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      let changed = false;
+      const normalized = parsed
+        .filter((entry): entry is Preprint => Boolean(entry && typeof entry === 'object' && 'id' in entry))
+        .map((preprint, index, items) => {
+          if (preprint.savedAt) {
+            return preprint;
+          }
+          changed = true;
+          const fallbackTime = new Date(Date.now() - (items.length - index) * 1000).toISOString();
+          return { ...preprint, savedAt: fallbackTime };
+        });
+      if (changed) {
+        localStorage.setItem(SAVED_PREPRINTS_KEY, JSON.stringify(normalized));
+      }
+      return normalized;
     } catch (error) {
       console.error('Error loading saved preprints:', error);
       return [];
@@ -46,7 +65,7 @@ export const storageService = {
       const saved = storageService.getSavedPreprints();
       const exists = saved.find(p => p.id === preprint.id);
       if (!exists) {
-        const updated = [...saved, { ...preprint, isSaved: true }];
+        const updated = [...saved, { ...preprint, isSaved: true, savedAt: new Date().toISOString() }];
         localStorage.setItem(SAVED_PREPRINTS_KEY, JSON.stringify(updated));
       }
     } catch (error) {
@@ -162,11 +181,12 @@ export const storageService = {
       const value = parsed?.[userId];
       return {
         manualPublicationIds: Array.isArray(value?.manualPublicationIds) ? value.manualPublicationIds : [],
+        hiddenPublicationIds: Array.isArray(value?.hiddenPublicationIds) ? value.hiddenPublicationIds : [],
         networkLabels: Array.isArray(value?.networkLabels) ? value.networkLabels : [],
       };
     } catch (error) {
       console.error('Error loading profile customization:', error);
-      return { manualPublicationIds: [], networkLabels: [] };
+      return { manualPublicationIds: [], hiddenPublicationIds: [], networkLabels: [] };
     }
   },
 

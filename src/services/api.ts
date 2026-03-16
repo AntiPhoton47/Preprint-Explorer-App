@@ -1,4 +1,4 @@
-import { Chat, ContentSource, ContentSyncDefinition, ModerationAction, ModerationReport, Notification, PasskeyCredential, PopularSearch, Preprint, SavedSearch, SearchSuggestion, SecurityEvent, SecuritySummary, TrustedDevice, User } from '../types';
+import { Chat, Collection, ContentSource, ContentSyncDefinition, ModerationAction, ModerationReport, Notification, PasskeyCredential, PopularSearch, Preprint, ProductAnnouncement, SavedSearch, SearchSuggestion, SecurityEvent, SecuritySummary, TrustedDevice, User } from '../types';
 
 let csrfToken: string | null = null;
 
@@ -14,6 +14,17 @@ type Settings = {
   profileVisibility: 'public' | 'followers' | 'private';
   messagePrivacy: 'everyone' | 'followers' | 'nobody';
   sharePrivacy: 'everyone' | 'followers' | 'nobody';
+};
+
+type DigestSendResponse = {
+  kind: 'daily' | 'weekly';
+  recipient: string;
+  subject: string;
+  paperCount: number;
+  delivery: {
+    delivered: boolean;
+    provider: 'smtp' | 'debug';
+  };
 };
 
 type AuthPayload = {
@@ -152,9 +163,50 @@ export async function updateSettings(settings: Partial<Settings>) {
   });
 }
 
+export async function sendDigestNow(kind: 'daily' | 'weekly') {
+  return request<DigestSendResponse>('/api/digests/send-now', {
+    method: 'POST',
+    body: JSON.stringify({ kind }),
+  });
+}
+
+export async function fetchPushPublicKey() {
+  return request<{ publicKey: string | null }>('/api/push/public-key');
+}
+
+export async function subscribeToPushNotifications(subscription: PushSubscriptionJSON) {
+  return request<{ ok: boolean }>('/api/push/subscribe', {
+    method: 'POST',
+    body: JSON.stringify(subscription),
+  });
+}
+
+export async function unsubscribeFromPushNotifications(subscription: PushSubscriptionJSON) {
+  return request<void>('/api/push/subscribe', {
+    method: 'DELETE',
+    body: JSON.stringify(subscription),
+  });
+}
+
+export async function fetchProductAnnouncements() {
+  return request<{ announcements: ProductAnnouncement[] }>('/api/admin/product-updates');
+}
+
+export async function publishProductAnnouncement(payload: {
+  title: string;
+  message: string;
+  actionUrl?: string;
+}) {
+  return request<{ announcement: ProductAnnouncement }>('/api/admin/product-updates', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function updateProfile(payload: {
   name: string;
   email: string;
+  orcidId?: string;
   affiliation: string;
   bio: string;
   title: string;
@@ -164,6 +216,18 @@ export async function updateProfile(payload: {
 }) {
   return request<{ user: User; social: { users: User[]; chats: Chat[] } }>('/api/profile', {
     method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function importProfilePublications(payload: {
+  source: 'orcid' | 'arxiv';
+  authorName?: string;
+  orcidId?: string;
+  maxResults?: number;
+}) {
+  return request<ContentIngestPayload & { sourceLabel: string }>('/api/profile/publications/import', {
+    method: 'POST',
     body: JSON.stringify(payload),
   });
 }
@@ -337,6 +401,46 @@ export async function fetchNotifications() {
   return request<{ notifications: Notification[] }>('/api/notifications');
 }
 
+export async function fetchCollections() {
+  return request<{ collections: Collection[] }>('/api/collections');
+}
+
+export async function createCollection(payload: {
+  name: string;
+  description?: string;
+  imageUrl?: string;
+}) {
+  return request<{ collections: Collection[] }>('/api/collections', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateCollection(collectionId: string, payload: {
+  name: string;
+  description?: string;
+  imageUrl?: string;
+}) {
+  return request<{ collections: Collection[] }>(`/api/collections/${collectionId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateCollectionPapers(collectionId: string, preprintIds: string[]) {
+  return request<{ collections: Collection[] }>(`/api/collections/${collectionId}/papers`, {
+    method: 'PATCH',
+    body: JSON.stringify({ preprintIds }),
+  });
+}
+
+export async function updateCollectionAccess(collectionId: string, collaborators: Array<{ email: string; role: 'viewer' | 'editor' }>) {
+  return request<{ collections: Collection[] }>(`/api/collections/${collectionId}/access`, {
+    method: 'PATCH',
+    body: JSON.stringify({ collaborators }),
+  });
+}
+
 export async function markNotificationsRead() {
   return request<void>('/api/notifications/mark-read', { method: 'POST' });
 }
@@ -431,6 +535,10 @@ export async function followUser(userId: string) {
 
 export async function unfollowUser(userId: string) {
   return request<{ users: User[]; chats: Chat[] }>(`/api/social/follow/${userId}`, { method: 'DELETE' });
+}
+
+export async function fetchUserConnections(userId: string) {
+  return request<{ followers: User[]; following: User[] }>(`/api/social/profile/${userId}/connections`);
 }
 
 export async function sharePreprint(preprintId: string, recipientIds: string[]) {

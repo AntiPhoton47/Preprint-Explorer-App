@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 const email = z.string().trim().email();
 const password = z.string().min(8).max(200);
+const deliveryDay = z.enum(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']);
 
 export const registerSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -57,7 +58,7 @@ export const settingsSchema = z.object({
   newPublications: z.boolean().optional(),
   citationAlerts: z.boolean().optional(),
   productUpdates: z.boolean().optional(),
-  deliveryDay: z.string().trim().min(3).max(32).optional(),
+  deliveryDay: deliveryDay.optional(),
   profileVisibility: z.enum(['public', 'followers', 'private']).optional(),
   messagePrivacy: z.enum(['everyone', 'followers', 'nobody']).optional(),
   sharePrivacy: z.enum(['everyone', 'followers', 'nobody']).optional(),
@@ -65,9 +66,28 @@ export const settingsSchema = z.object({
   message: 'At least one setting change is required',
 });
 
+export const digestSendSchema = z.object({
+  kind: z.enum(['daily', 'weekly']),
+});
+
+export const pushSubscriptionSchema = z.object({
+  endpoint: z.string().url(),
+  keys: z.object({
+    p256dh: z.string().min(1).max(512),
+    auth: z.string().min(1).max(512),
+  }),
+});
+
+export const productAnnouncementSchema = z.object({
+  title: z.string().trim().min(4).max(160),
+  message: z.string().trim().min(8).max(4000),
+  actionUrl: z.string().trim().max(200).optional().or(z.literal('')),
+});
+
 export const updateProfileSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email,
+  orcidId: z.string().trim().max(64).optional().or(z.literal('')),
   affiliation: z.string().trim().min(2).max(160),
   bio: z.string().trim().min(8).max(1200),
   title: z.string().trim().min(1).max(160),
@@ -137,6 +157,21 @@ export const contentIngestSchema = z.object({
   maxResults: z.number().int().min(1).max(50).optional().default(15),
 });
 
+export const profilePublicationImportSchema = z.object({
+  source: z.enum(['orcid', 'arxiv']),
+  authorName: z.string().trim().min(2).max(160).optional(),
+  orcidId: z.string().trim().min(4).max(64).optional(),
+  maxResults: z.number().int().min(1).max(50).optional().default(10),
+}).superRefine((value, ctx) => {
+  if (value.source === 'orcid' && !value.orcidId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['orcidId'],
+      message: 'ORCID iD is required for ORCID imports',
+    });
+  }
+});
+
 export const contentSyncDefinitionSchema = z.object({
   id: z.string().uuid().optional(),
   sourceId: z.string().trim().min(2).max(40),
@@ -144,6 +179,31 @@ export const contentSyncDefinitionSchema = z.object({
   maxResults: z.number().int().min(1).max(50).optional().default(15),
   intervalMinutes: z.number().int().min(15).max(60 * 24 * 7),
   enabled: z.boolean().optional().default(true),
+});
+
+export const collectionCollaboratorSchema = z.object({
+  email,
+  role: z.enum(['viewer', 'editor']).optional().default('editor'),
+});
+
+export const createCollectionSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  description: z.string().trim().max(1000).optional().or(z.literal('')),
+  imageUrl: z.string().trim().url().optional().or(z.literal('')),
+});
+
+export const updateCollectionSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  description: z.string().trim().max(1000).optional().or(z.literal('')),
+  imageUrl: z.string().trim().url().optional().or(z.literal('')),
+});
+
+export const updateCollectionPapersSchema = z.object({
+  preprintIds: z.array(z.string().trim().min(1).max(200)).max(500),
+});
+
+export const updateCollectionAccessSchema = z.object({
+  collaborators: z.array(collectionCollaboratorSchema).max(100),
 });
 
 export function parseOrThrow<T>(schema: z.ZodType<T>, input: unknown): T {

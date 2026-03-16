@@ -68,7 +68,8 @@ import {
   Info,
   Paperclip,
   Send,
-  BarChart3
+  BarChart3,
+  LoaderCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -85,7 +86,7 @@ import {
   Bar,
   Cell
 } from 'recharts';
-import { 
+import type { 
   Preprint, 
   PaperComment,
   User,
@@ -111,6 +112,7 @@ import {
   DigestActivity,
   Chat,
   Message,
+  ProductAnnouncement,
   SupportTicket
 } from './types';
 
@@ -121,6 +123,7 @@ import {
   changePassword,
   clearCsrfToken,
   completeTwoFactorLogin,
+  createCollection as createCollectionRequest,
   createChat,
   disableTwoFactor,
   deleteContentSyncDefinition,
@@ -129,8 +132,11 @@ import {
   fetchBackendPreprints,
   searchBackendPreprints,
   fetchBlockedUsers,
+  fetchCollections,
   fetchContentSources,
   fetchContentSyncDefinitions,
+  fetchProductAnnouncements,
+  fetchPushPublicKey,
   fetchNotifications,
   fetchSearchAnalytics,
   fetchSavedSearches,
@@ -141,10 +147,12 @@ import {
   fetchSecurityEvents,
   fetchSecuritySummary,
   fetchSocialBootstrap,
+  fetchUserConnections,
   fetchTrustedDevices,
   followUser,
   getCurrentSession,
   ingestContentSource,
+  importProfilePublications,
   login,
   markChatRead,
   markNotificationRead,
@@ -161,6 +169,7 @@ import {
   register,
   requestEmailVerification,
   requestPasswordReset,
+  publishProductAnnouncement,
   registerPasskey,
   reviewModerationReport,
   assignModerationReport,
@@ -168,14 +177,20 @@ import {
   resetPassword,
   rotateSession,
   sendMessage,
+  sendDigestNow,
   sharePreprint,
   signInWithPasskey,
+  subscribeToPushNotifications,
   startTwoFactorSetup,
   type AuthPayload,
   type Settings as UserSettings,
   type TwoFactorLoginPayload,
   unfollowUser,
+  unsubscribeFromPushNotifications,
   unblockUser,
+  updateCollection as updateCollectionRequest,
+  updateCollectionAccess as updateCollectionAccessRequest,
+  updateCollectionPapers as updateCollectionPapersRequest,
   updateProfile,
   updateSettings,
   verifyEmail,
@@ -204,6 +219,174 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   sharePrivacy: 'everyone',
 };
 
+type ChatEntryMode = 'message' | 'meeting';
+type MeetingInviteType = 'audio' | 'video';
+
+type ChatEntryContext = {
+  chatId: string;
+  mode: ChatEntryMode;
+  meetingType?: MeetingInviteType;
+};
+
+function parseProfileEntryFromLocation() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const url = new URL(window.location.href);
+  return url.searchParams.get('profile')?.trim() || null;
+}
+
+function parseNavigateActionFromLocation() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const url = new URL(window.location.href);
+  return url.searchParams.get('navigate')?.trim() || null;
+}
+
+function parseCollectionEntryFromLocation() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const match = window.location.pathname.match(/^\/collections\/([^/?#]+)/);
+  if (!match) {
+    return null;
+  }
+
+  return decodeURIComponent(match[1] ?? '').trim() || null;
+}
+
+function parseChatEntryContextFromLocation(): ChatEntryContext | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const url = new URL(window.location.href);
+  const chatId = url.searchParams.get('chat')?.trim();
+  if (!chatId) {
+    return null;
+  }
+
+  const mode = url.searchParams.get('mode') === 'meeting' ? 'meeting' : 'message';
+  const rawType = url.searchParams.get('type');
+  const meetingType = rawType === 'audio' || rawType === 'video' ? rawType : undefined;
+
+  return {
+    chatId,
+    mode,
+    meetingType,
+  };
+}
+
+function clearChatEntryContextFromLocation() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.delete('chat');
+  url.searchParams.delete('mode');
+  url.searchParams.delete('type');
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  window.history.replaceState({}, '', nextUrl);
+}
+
+function clearProfileEntryFromLocation() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.delete('profile');
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  window.history.replaceState({}, '', nextUrl);
+}
+
+function clearNavigateActionFromLocation() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.delete('navigate');
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  window.history.replaceState({}, '', nextUrl);
+}
+
+function clearCollectionEntryFromLocation() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  if (!url.pathname.startsWith('/collections/')) {
+    return;
+  }
+
+  const nextUrl = `${url.search}${url.hash}` || '/';
+  window.history.replaceState({}, '', nextUrl);
+}
+
+function buildChatEntryLink(chatId: string, context?: { mode?: ChatEntryMode; meetingType?: MeetingInviteType }) {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  const url = new URL(window.location.pathname, window.location.origin);
+  url.searchParams.set('chat', chatId);
+  if (context?.mode === 'meeting') {
+    url.searchParams.set('mode', 'meeting');
+    if (context.meetingType) {
+      url.searchParams.set('type', context.meetingType);
+    }
+  }
+  return url.toString();
+}
+
+function getCollectionUpdatedAtValue(value: string) {
+  const parsed = new Date(value).getTime();
+  if (Number.isNaN(parsed)) {
+    return 0;
+  }
+  return parsed;
+}
+
+function formatCollectionUpdatedAt(value: string) {
+  const parsed = new Date(value).getTime();
+  if (Number.isNaN(parsed)) {
+    return value;
+  }
+  return formatRelativeTimestamp(value);
+}
+
+function getCollectionCollaborators(collection: Collection) {
+  if (collection.collaborators && collection.collaborators.length > 0) {
+    return collection.collaborators;
+  }
+  return (collection.sharedWith ?? []).map((email) => ({
+    email,
+    role: 'editor' as const,
+  }));
+}
+
+function getCollectionAccessRole(collection: Collection, currentUser: User) {
+  if (collection.ownerId && collection.ownerId === currentUser.id) {
+    return 'owner' as const;
+  }
+  const email = currentUser.email?.toLowerCase();
+  if (!email) {
+    return collection.ownerId ? 'none' as const : 'owner' as const;
+  }
+  const collaborator = getCollectionCollaborators(collection).find((entry) => entry.email.toLowerCase() === email);
+  if (collaborator) {
+    return collaborator.role;
+  }
+  return collection.ownerId ? 'none' as const : 'owner' as const;
+}
+
 export default function App() {
   return (
     <AppDataProvider>
@@ -230,7 +413,10 @@ function AppShell() {
   const [moderationReports, setModerationReports] = useState<ModerationReport[]>([]);
   const [moderators, setModerators] = useState<Array<Pick<User, 'id' | 'name'>>>([]);
   const [moderationActions, setModerationActions] = useState<Record<string, ModerationAction[]>>({});
+  const [productAnnouncements, setProductAnnouncements] = useState<ProductAnnouncement[]>([]);
   const [currentScreen, setCurrentScreen] = useState<Screen>('login');
+  const [notificationsTab, setNotificationsTab] = useState<'all' | 'research' | 'network' | 'system'>('all');
+  const [pendingModerationReportId, setPendingModerationReportId] = useState<string | null>(null);
   const [navigationHistory, setNavigationHistory] = useState<Screen[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeHomeFeedId, setActiveHomeFeedId] = useState<string | null>(() => storageService.getActiveFeedId());
@@ -244,6 +430,11 @@ function AppShell() {
   const [selectedInstitution, setSelectedInstitution] = useState<Institution | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
+  const [pendingProfileUserId, setPendingProfileUserId] = useState<string | null>(() => parseProfileEntryFromLocation());
+  const [pendingCollectionToken, setPendingCollectionToken] = useState<string | null>(() => parseCollectionEntryFromLocation());
+  const [pendingChatEntryContext, setPendingChatEntryContext] = useState<ChatEntryContext | null>(() => parseChatEntryContextFromLocation());
+  const [pendingNavigateAction, setPendingNavigateAction] = useState<string | null>(() => parseNavigateActionFromLocation());
+  const [activeChatEntryContext, setActiveChatEntryContext] = useState<ChatEntryContext | null>(null);
   const [legalType, setLegalType] = useState<'tos' | 'privacy'>('tos');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [savedPreprints, setSavedPreprints] = useState<Preprint[]>([]);
@@ -306,6 +497,17 @@ function AppShell() {
     }));
   };
 
+  const refreshCollectionsState = async (userId?: string) => {
+    if (!currentUser && !userId) {
+      return;
+    }
+    const response = await fetchCollections();
+    setDataset(prev => ({
+      ...prev,
+      collections: response.collections,
+    }));
+  };
+
   const refreshModerationState = async (userId?: string) => {
     if (!currentUser && !userId) {
       return;
@@ -336,11 +538,14 @@ function AppShell() {
       setModerationReports([]);
       setModerators([]);
       setModerationActions({});
+      setProductAnnouncements([]);
       return;
     }
     const response = await fetchModerationReports('all');
     setModerationReports(response.reports);
     setModerators(response.moderators);
+    const announcementsResponse = await fetchProductAnnouncements();
+    setProductAnnouncements(announcementsResponse.announcements);
   };
 
   const showToast = (message: string, type: 'success' | 'info' = 'success') => {
@@ -377,6 +582,11 @@ function AppShell() {
     setCurrentScreen(screen);
   };
 
+  const openNotificationsScreen = (tab: 'all' | 'research' | 'network' | 'system' = 'all') => {
+    setNotificationsTab(tab);
+    navigateTo('notifications');
+  };
+
   const goBack = () => {
     if (navigationHistory.length > 0) {
       const prevScreen = navigationHistory[navigationHistory.length - 1];
@@ -388,57 +598,123 @@ function AppShell() {
     }
   };
 
+  const openChatConversation = (chat: Chat, entryContext: ChatEntryContext | null = null) => {
+    setSelectedChat(chat);
+    setActiveChatEntryContext(entryContext);
+    if (currentScreen !== 'chat-detail' || selectedChat?.id !== chat.id) {
+      navigateTo('chat-detail');
+    }
+  };
+
+  const openActionUrl = (actionUrl?: string | null) => {
+    const normalizedActionUrl = actionUrl?.trim();
+    if (!normalizedActionUrl) {
+      return false;
+    }
+
+    if (normalizedActionUrl.startsWith('/chat/')) {
+      const chatId = normalizedActionUrl.replace('/chat/', '');
+      const chat = dataset.chats.find((item) => item.id === chatId);
+      if (chat) {
+        openChatConversation(chat);
+        return true;
+      }
+    }
+
+    if (normalizedActionUrl.startsWith('/share/')) {
+      const preprintId = normalizedActionUrl.replace('/share/', '');
+      const preprint = dataset.preprints.find((item) => item.id === preprintId);
+      if (preprint) {
+        setSelectedPreprint(preprint);
+        navigateTo('reader');
+        return true;
+      }
+    }
+
+    if (normalizedActionUrl.startsWith('/profile/')) {
+      const userId = normalizedActionUrl.replace('/profile/', '');
+      if (currentUser?.id === userId) {
+        navigateTo('profile');
+        return true;
+      }
+      const user = dataset.users.find((item) => item.id === userId);
+      if (user) {
+        setSelectedUser(user);
+        navigateTo('user-profile');
+        return true;
+      }
+    }
+
+    if (normalizedActionUrl.startsWith('/moderation/')) {
+      setPendingModerationReportId(normalizedActionUrl.replace('/moderation/', ''));
+      navigateTo('moderation-center');
+      return true;
+    }
+
+    if (normalizedActionUrl.startsWith('/collections/')) {
+      const token = normalizedActionUrl.replace('/collections/', '');
+      const collection = dataset.collections.find((item) => item.shareLinkToken === token || item.id === token);
+      if (collection) {
+        setSelectedCollection(collection);
+        navigateTo('collection-detail');
+        return true;
+      }
+    }
+
+    if (normalizedActionUrl.startsWith('/notifications/')) {
+      const nextTab = normalizedActionUrl.replace('/notifications/', '') as 'all' | 'research' | 'network' | 'system';
+      if (['all', 'research', 'network', 'system'].includes(nextTab)) {
+        openNotificationsScreen(nextTab);
+        return true;
+      }
+    }
+
+    if (normalizedActionUrl === '/notifications') {
+      openNotificationsScreen('all');
+      return true;
+    }
+
+    if (normalizedActionUrl === '/home') {
+      navigateTo('home');
+      return true;
+    }
+
+    if (normalizedActionUrl === '/profile') {
+      navigateTo('profile');
+      return true;
+    }
+
+    if (normalizedActionUrl === '/daily-digest') {
+      navigateTo('daily-digest');
+      return true;
+    }
+
+    if (normalizedActionUrl === '/weekly-digest') {
+      navigateTo('weekly-digest');
+      return true;
+    }
+
+    if (normalizedActionUrl === '/notification-settings') {
+      navigateTo('notification-settings');
+      return true;
+    }
+
+    if (normalizedActionUrl === '/security-settings') {
+      navigateTo('security-settings');
+      return true;
+    }
+
+    return false;
+  };
+
   const openNotificationDestination = async (notification: Notification) => {
     if (notification.isNew) {
       await markNotificationRead(notification.id);
       await refreshNotificationsState();
     }
 
-    const actionUrl = notification.actionUrl?.trim();
-    if (actionUrl) {
-      if (actionUrl.startsWith('/chat/')) {
-        const chatId = actionUrl.replace('/chat/', '');
-        const chat = dataset.chats.find((item) => item.id === chatId);
-        if (chat) {
-          setSelectedChat(chat);
-          navigateTo('chat-detail');
-          return;
-        }
-      }
-
-      if (actionUrl.startsWith('/share/')) {
-        const preprintId = actionUrl.replace('/share/', '');
-        const preprint = dataset.preprints.find((item) => item.id === preprintId);
-        if (preprint) {
-          setSelectedPreprint(preprint);
-          navigateTo('reader');
-          return;
-        }
-      }
-
-      if (actionUrl.startsWith('/profile/')) {
-        const userId = actionUrl.replace('/profile/', '');
-        if (currentUser?.id === userId) {
-          navigateTo('profile');
-          return;
-        }
-        const user = dataset.users.find((item) => item.id === userId);
-        if (user) {
-          setSelectedUser(user);
-          navigateTo('user-profile');
-          return;
-        }
-      }
-
-      if (actionUrl.startsWith('/moderation/')) {
-        navigateTo('moderation-center');
-        return;
-      }
-
-      if (actionUrl === '/notifications') {
-        navigateTo('notifications');
-        return;
-      }
+    if (openActionUrl(notification.actionUrl)) {
+      return;
     }
 
     if (notification.type === 'feed') {
@@ -453,8 +729,20 @@ function AppShell() {
       navigateTo('daily-digest');
       return;
     }
+    if (notification.type === 'message') {
+      navigateTo('chat');
+      return;
+    }
     if (notification.type === 'citation') {
       navigateTo('weekly-digest');
+      return;
+    }
+    if (notification.type === 'moderation' || notification.type === 'account') {
+      openNotificationsScreen('system');
+      return;
+    }
+    if (notification.type === 'product') {
+      navigateTo('notification-settings');
       return;
     }
     navigateTo('notifications');
@@ -465,6 +753,7 @@ function AppShell() {
       try {
         const session = await refreshSession();
         await refreshSecurityState();
+        await refreshCollectionsState(session.user.id);
         await refreshNotificationsState('bootstrap');
         await refreshModerationState('bootstrap');
         await refreshSavedSearchesState('bootstrap');
@@ -483,6 +772,7 @@ function AppShell() {
         setPopularSearches([]);
         setSearchSuggestions([]);
         setModerationReports([]);
+        setProductAnnouncements([]);
       } finally {
         setIsAuthLoading(false);
       }
@@ -490,6 +780,85 @@ function AppShell() {
 
     bootstrap();
   }, [setDataset]);
+
+  useEffect(() => {
+    const syncChatEntryContext = () => {
+      setPendingProfileUserId(parseProfileEntryFromLocation());
+      setPendingCollectionToken(parseCollectionEntryFromLocation());
+      setPendingChatEntryContext(parseChatEntryContextFromLocation());
+      setPendingNavigateAction(parseNavigateActionFromLocation());
+    };
+
+    window.addEventListener('popstate', syncChatEntryContext);
+    return () => {
+      window.removeEventListener('popstate', syncChatEntryContext);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser || !pendingChatEntryContext) {
+      return;
+    }
+
+    const chat = dataset.chats.find((item) => item.id === pendingChatEntryContext.chatId);
+    if (!chat) {
+      return;
+    }
+
+    openChatConversation(chat, pendingChatEntryContext);
+    setPendingChatEntryContext(null);
+    clearChatEntryContextFromLocation();
+  }, [currentUser, dataset.chats, pendingChatEntryContext]);
+
+  useEffect(() => {
+    if (!currentUser || !pendingProfileUserId) {
+      return;
+    }
+
+    if (pendingProfileUserId === currentUser.id) {
+      setCurrentScreen('profile');
+      setPendingProfileUserId(null);
+      clearProfileEntryFromLocation();
+      return;
+    }
+
+    const user = dataset.users.find((item) => item.id === pendingProfileUserId);
+    if (!user) {
+      return;
+    }
+
+    setSelectedUser(user);
+    navigateTo('user-profile');
+    setPendingProfileUserId(null);
+    clearProfileEntryFromLocation();
+  }, [currentUser, dataset.users, pendingProfileUserId]);
+
+  useEffect(() => {
+    if (!currentUser || !pendingCollectionToken) {
+      return;
+    }
+
+    const collection = dataset.collections.find((item) => item.shareLinkToken === pendingCollectionToken || item.id === pendingCollectionToken);
+    if (!collection) {
+      return;
+    }
+
+    setSelectedCollection(collection);
+    navigateTo('collection-detail');
+    setPendingCollectionToken(null);
+    clearCollectionEntryFromLocation();
+  }, [currentUser, dataset.collections, pendingCollectionToken]);
+
+  useEffect(() => {
+    if (!currentUser || !pendingNavigateAction) {
+      return;
+    }
+    if (!openActionUrl(pendingNavigateAction)) {
+      return;
+    }
+    setPendingNavigateAction(null);
+    clearNavigateActionFromLocation();
+  }, [currentUser, dataset.chats, dataset.preprints, dataset.users, pendingNavigateAction]);
 
   useEffect(() => {
     if (!currentUser || !userSettings.pushEnabled || currentScreen === 'notifications') {
@@ -509,8 +878,68 @@ function AppShell() {
   }, [currentUser, currentScreen, dataset.notifications, userSettings.pushEnabled]);
 
   useEffect(() => {
-    const savedIds = new Set(storageService.getSavedPreprints().map(preprint => preprint.id));
-    setSavedPreprints(dataset.preprints.filter(preprint => savedIds.has(preprint.id)));
+    if (!currentUser || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      return;
+    }
+
+    let cancelled = false;
+    const syncPushSubscription = async () => {
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      const existingSubscription = await registration.pushManager.getSubscription();
+
+      if (!userSettings.pushEnabled) {
+        if (existingSubscription) {
+          const payload = existingSubscription.toJSON();
+          if (payload.endpoint && payload.keys?.p256dh && payload.keys?.auth) {
+            await unsubscribeFromPushNotifications(payload as PushSubscriptionJSON).catch(() => {});
+          }
+          await existingSubscription.unsubscribe().catch(() => {});
+        }
+        return;
+      }
+
+      const publicKeyResponse = await fetchPushPublicKey();
+      if (!publicKeyResponse.publicKey) {
+        return;
+      }
+
+      let permission = Notification.permission;
+      if (permission === 'default') {
+        permission = await Notification.requestPermission();
+      }
+      if (permission !== 'granted') {
+        return;
+      }
+
+      const subscription = existingSubscription ?? await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKeyResponse.publicKey),
+      });
+      const payload = subscription.toJSON();
+      if (!cancelled && payload.endpoint && payload.keys?.p256dh && payload.keys?.auth) {
+        await subscribeToPushNotifications(payload as PushSubscriptionJSON);
+      }
+    };
+
+    void syncPushSubscription().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id, userSettings.pushEnabled]);
+
+  useEffect(() => {
+    const savedRecords = storageService.getSavedPreprints();
+    const savedMap = new Map(savedRecords.map((preprint) => [preprint.id, preprint]));
+    setSavedPreprints(
+      dataset.preprints
+        .filter((preprint) => savedMap.has(preprint.id))
+        .map((preprint) => ({
+          ...savedMap.get(preprint.id),
+          ...preprint,
+          isSaved: true,
+          savedAt: savedMap.get(preprint.id)?.savedAt,
+        })),
+    );
   }, [dataset.preprints]);
 
   useEffect(() => {
@@ -642,6 +1071,33 @@ function AppShell() {
     if (isSaved) {
       storageService.removePreprint(preprint.id);
       setSavedPreprints(prev => prev.filter(p => p.id !== preprint.id));
+      if (currentUser) {
+        const editableCollections = dataset.collections.filter((collection) => {
+          const role = getCollectionAccessRole(collection, currentUser);
+          return ['owner', 'editor'].includes(role) && (collection.preprintIds ?? []).includes(preprint.id);
+        });
+        if (editableCollections.length > 0) {
+          void Promise.all(
+            editableCollections.map((collection) =>
+              updateCollectionPapersRequest(collection.id, (collection.preprintIds ?? []).filter((id) => id !== preprint.id)),
+            ),
+          )
+            .then((responses) => {
+              const latest = responses[responses.length - 1];
+              if (latest) {
+                setDataset((prev) => ({
+                  ...prev,
+                  collections: latest.collections,
+                  metadata: {
+                    ...prev.metadata,
+                    lastUpdated: new Date().toISOString(),
+                  },
+                }));
+              }
+            })
+            .catch(() => {});
+        }
+      }
     } else {
       const newPreprint = { ...preprint, isSaved: true };
       storageService.savePreprint(newPreprint);
@@ -695,14 +1151,37 @@ function AppShell() {
     if (inst) {
       setSelectedInstitution(inst);
       navigateTo('institution-detail');
+      return;
     }
+    const fallbackInstitution: Institution = {
+      id: slugifyLabel(institutionId) || institutionId,
+      name: institutionId,
+      location: 'Institution details are limited in the current dataset.',
+      imageUrl: `https://images.unsplash.com/photo-1523050854058-8df90110c9f1?auto=format&fit=crop&w=1200&q=80&sig=${encodeURIComponent(institutionId)}`,
+      description: `Preprint Explorer does not yet have a full institution profile for ${institutionId}, but affiliated researchers and publications will still be surfaced when available.`,
+      stats: {
+        researchers: 0,
+        publications: 0,
+        citations: 0,
+      },
+    };
+    setSelectedInstitution(fallbackInstitution);
+    navigateTo('institution-detail');
+  };
+
+  const handleInstitutionHomepageOpen = (institutionId: string) => {
+    const institution = dataset.institutions.find((item) => item.id === institutionId || item.name === institutionId);
+    if (institution?.homepageUrl) {
+      window.open(institution.homepageUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    showToast('A homepage URL is not available for this institution yet.', 'info');
   };
 
   const handleMessageClick = (user: User) => {
     const existingChat = dataset.chats.find(c => c.participants.includes(user.id));
     if (existingChat) {
-      setSelectedChat(existingChat);
-      navigateTo('chat-detail');
+      openChatConversation(existingChat);
     } else {
       createChat(user.id)
         .then(({ chat }) => {
@@ -710,8 +1189,7 @@ function AppShell() {
             ...prev,
             chats: [chat, ...prev.chats.filter(existing => existing.id !== chat.id)],
           }));
-          setSelectedChat(chat);
-          navigateTo('chat-detail');
+          openChatConversation(chat);
         })
         .catch(error => showToast(error instanceof Error ? error.message : 'Unable to create chat', 'info'));
     }
@@ -739,6 +1217,7 @@ function AppShell() {
     }
     applyAuthSession(session);
     await refreshSecurityState();
+    await refreshCollectionsState(session.user.id);
     await refreshNotificationsState(session.user.id);
     await refreshModerationState(session.user.id);
     await refreshSavedSearchesState(session.user.id);
@@ -751,6 +1230,7 @@ function AppShell() {
     const session = await register(name, email, affiliation, password);
     applyAuthSession(session);
     await refreshSecurityState();
+    await refreshCollectionsState(session.user.id);
     await refreshNotificationsState(session.user.id);
     await refreshModerationState(session.user.id);
     await refreshSavedSearchesState(session.user.id);
@@ -762,6 +1242,7 @@ function AppShell() {
     const session = await completeTwoFactorLogin(challengeToken, code, rememberDevice);
     applyAuthSession(session);
     await refreshSecurityState();
+    await refreshCollectionsState(session.user.id);
     await refreshNotificationsState(session.user.id);
     await refreshModerationState(session.user.id);
     await refreshSavedSearchesState(session.user.id);
@@ -785,6 +1266,7 @@ function AppShell() {
     setSavedSearches([]);
     setSearchSuggestions([]);
     setModerationReports([]);
+    setProductAnnouncements([]);
     setDataset(prev => ({ ...prev, notifications: [] }));
     setCurrentScreen('login');
     setNavigationHistory([]);
@@ -874,6 +1356,7 @@ function AppShell() {
     const session = await signInWithPasskey(email);
     applyAuthSession(session);
     await refreshSecurityState();
+    await refreshCollectionsState(session.user.id);
     await refreshNotificationsState(session.user.id);
     await refreshModerationState(session.user.id);
     await refreshSavedSearchesState(session.user.id);
@@ -953,6 +1436,17 @@ function AppShell() {
     return detail;
   };
 
+  const handlePublishProductAnnouncement = async (payload: {
+    title: string;
+    message: string;
+    actionUrl?: string;
+  }) => {
+    const response = await publishProductAnnouncement(payload);
+    setProductAnnouncements((prev) => [response.announcement, ...prev.filter((item) => item.id !== response.announcement.id)]);
+    await refreshNotificationsState(currentUser?.id);
+    return response.announcement;
+  };
+
   const handleSaveCurrentSearch = async (label: string, filters: SavedSearch['filters']) => {
     const response = await saveSearch({
       label,
@@ -996,6 +1490,7 @@ function AppShell() {
   const handleProfileSave = async (payload: {
     name: string;
     email: string;
+    orcidId?: string;
     affiliation: string;
     bio: string;
     title: string;
@@ -1158,6 +1653,7 @@ function AppShell() {
       );
       case 'library': return (
         <LibraryScreen 
+          currentUser={currentUser!}
           onCollectionClick={(c) => { setSelectedCollection(c); navigateTo('collection-detail'); }} 
           savedPreprints={savedPreprints} 
           onToggleSave={toggleSave} 
@@ -1169,8 +1665,10 @@ function AppShell() {
       );
       case 'collection-detail': return (
         <CollectionDetailScreen 
+          currentUser={currentUser!}
           collection={selectedCollection || dataset.collections[0]} 
           onBack={goBack} 
+          onOpenMenu={() => setIsSidebarOpen(true)}
           onShareCollection={() => navigateTo('share')}
           savedPreprints={savedPreprints} 
           onToggleSave={toggleSave} 
@@ -1201,27 +1699,29 @@ function AppShell() {
           setShowOutline={setShowOutline}
         />
       );
-      case 'profile': return <ProfileScreen currentUser={currentUser!} onEdit={() => navigateTo('edit-profile')} onSettings={() => navigateTo('notification-settings')} onSignOut={handleSignOut} onInstitutionClick={handleInstitutionClick} onUserClick={handleUserClick} preprints={dataset.preprints} showToast={showToast} />;
+      case 'profile': return <ProfileScreen currentUser={currentUser!} onEdit={() => navigateTo('edit-profile')} onSettings={() => navigateTo('notification-settings')} onSignOut={handleSignOut} onInstitutionClick={handleInstitutionClick} onInstitutionHomepageOpen={handleInstitutionHomepageOpen} onUserClick={handleUserClick} onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }} onRefreshSession={refreshSession} preprints={dataset.preprints} showToast={showToast} />;
       case 'edit-profile': return <EditProfileScreen currentUser={currentUser!} onBack={goBack} onSaveProfile={handleProfileSave} showToast={showToast} />;
-      case 'notification-settings': return <SettingsScreen settings={userSettings} canModerate={Boolean(currentUser?.isAdmin)} onUpdateSetting={handleUpdateSetting} onBack={goBack} onOpenMenu={() => setIsSidebarOpen(true)} onNavigate={(s: Screen) => navigateTo(s)} onLegal={(type) => { setLegalType(type); navigateTo('legal'); }} showToast={showToast} onSignOut={handleSignOut} />;
-      case 'change-password': return <ChangePasswordScreen onBack={goBack} showToast={showToast} />;
-      case '2fa-setup': return <TwoFactorAuthScreen currentUser={currentUser!} onBack={goBack} onNext={() => navigateTo('2fa-backup')} onEnable={handleEnableTwoFactor} onDisable={handleDisableTwoFactor} showToast={showToast} />;
-      case '2fa-backup': return <TwoFactorBackupCodesScreen backupCodes={latestBackupCodes} onBack={goBack} onRegenerate={handleRegenerateBackupCodes} onDone={() => navigateTo('notification-settings')} showToast={showToast} />;
+      case 'notification-settings': return <SettingsScreen initialTab="notifications" settings={userSettings} currentUser={currentUser!} securitySummary={securitySummary} trustedDevicesCount={trustedDevices.length} securityAlertsCount={securityEvents.filter((event) => event.alert).length} canModerate={Boolean(currentUser?.isAdmin)} onUpdateSetting={handleUpdateSetting} onBack={goBack} onOpenMenu={() => setIsSidebarOpen(true)} onNavigate={(s: Screen) => navigateTo(s)} onLegal={(type) => { setLegalType(type); navigateTo('legal'); }} showToast={showToast} onSignOut={handleSignOut} />;
+      case 'security-settings': return <SettingsScreen initialTab="security" settings={userSettings} currentUser={currentUser!} securitySummary={securitySummary} trustedDevicesCount={trustedDevices.length} securityAlertsCount={securityEvents.filter((event) => event.alert).length} canModerate={Boolean(currentUser?.isAdmin)} onUpdateSetting={handleUpdateSetting} onBack={goBack} onOpenMenu={() => setIsSidebarOpen(true)} onNavigate={(s: Screen) => navigateTo(s)} onLegal={(type) => { setLegalType(type); navigateTo('legal'); }} showToast={showToast} onSignOut={handleSignOut} />;
+      case 'change-password': return <ChangePasswordScreen currentUser={currentUser!} onBack={goBack} showToast={showToast} />;
+      case '2fa-setup': return <TwoFactorAuthScreen currentUser={currentUser!} securitySummary={securitySummary} onBack={goBack} onNext={() => navigateTo('2fa-backup')} onEnable={handleEnableTwoFactor} onDisable={handleDisableTwoFactor} onRegenerate={handleRegenerateBackupCodes} onOpenBackupCodes={() => navigateTo('2fa-backup')} onOpenHelp={() => navigateTo('help')} showToast={showToast} />;
+      case '2fa-backup': return <TwoFactorBackupCodesScreen backupCodes={latestBackupCodes} onBack={goBack} onRegenerate={handleRegenerateBackupCodes} onDone={() => navigateTo('security-settings')} showToast={showToast} />;
       case 'security-log': return <SecurityLogScreen logs={securityEvents} onBack={goBack} onRotateSession={handleRotateSession} onLogoutOthers={handleLogoutOtherSessions} showToast={showToast} />;
-      case 'passkeys': return <PasskeysScreen passkeys={passkeys} securitySummary={securitySummary} onBack={goBack} onRegisterPasskey={handleRegisterPasskey} onDeletePasskey={handleDeletePasskey} showToast={showToast} />;
-      case 'notifications': return <NotificationsScreen settings={userSettings} onOpenNotification={openNotificationDestination} onBack={goBack} showToast={showToast} onRefreshNotifications={refreshNotificationsState} />;
+      case 'passkeys': return <PasskeysScreen currentUser={currentUser!} passkeys={passkeys} securitySummary={securitySummary} onBack={goBack} onOpenTrustedDevices={() => navigateTo('trusted-devices')} onRegisterPasskey={handleRegisterPasskey} onDeletePasskey={handleDeletePasskey} showToast={showToast} />;
+      case 'notifications': return <NotificationsScreen settings={userSettings} activeTab={notificationsTab} onChangeTab={setNotificationsTab} onOpenNotification={openNotificationDestination} onBack={goBack} showToast={showToast} onRefreshNotifications={refreshNotificationsState} />;
       case 'trends': return (
         <TrendsScreen 
           onTopicClick={() => navigateTo('topic-insight')} 
           onAuthorClick={handleUserClick}
           onTagClick={handleTagClick}
           onInstitutionClick={handleInstitutionClick}
+          onInstitutionHomepageOpen={handleInstitutionHomepageOpen}
           onSearch={(query) => { setSearchQuery(query); navigateTo('home'); }}
           showToast={showToast} 
         />
       );
-      case 'daily-digest': return <DailyDigestScreen onBack={goBack} onOpenSettings={() => navigateTo('notification-settings')} onOpenHelp={() => navigateTo('help')} onOpenNotifications={() => navigateTo('notifications')} onUnsubscribe={async () => { await handleUpdateSetting('dailyDigest', false); }} isSubscribed={userSettings.dailyDigest} showToast={showToast} />;
-      case 'weekly-digest': return <WeeklyDigestScreen onBack={goBack} onOpenLibrary={() => navigateTo('library')} onOpenProfile={() => navigateTo('profile')} onOpenHome={() => navigateTo('home')} onOpenSettings={() => navigateTo('notification-settings')} onUnsubscribe={async () => { await handleUpdateSetting('weeklyDigest', false); }} isSubscribed={userSettings.weeklyDigest} showToast={showToast} />;
+      case 'daily-digest': return <DailyDigestScreen onBack={goBack} onOpenSettings={() => navigateTo('notification-settings')} onOpenHelp={() => navigateTo('help')} onOpenNotifications={() => openNotificationsScreen('all')} onUnsubscribe={async () => { await handleUpdateSetting('dailyDigest', false); }} isSubscribed={userSettings.dailyDigest} emailEnabled={userSettings.emailEnabled} showToast={showToast} />;
+      case 'weekly-digest': return <WeeklyDigestScreen onBack={goBack} onOpenLibrary={() => navigateTo('library')} onOpenProfile={() => navigateTo('profile')} onOpenHome={() => navigateTo('home')} onOpenSettings={() => navigateTo('notification-settings')} onUnsubscribe={async () => { await handleUpdateSetting('weeklyDigest', false); }} isSubscribed={userSettings.weeklyDigest} emailEnabled={userSettings.emailEnabled} showToast={showToast} />;
       case 'topic-insight': return (
         <TopicInsightScreen 
           onBack={goBack} 
@@ -1242,6 +1742,7 @@ function AppShell() {
           onTagClick={handleTagClick}
           onAuthorClick={handleUserClick}
           onInstitutionClick={handleInstitutionClick}
+          onInstitutionHomepageOpen={handleInstitutionHomepageOpen}
           onMessage={handleMessageClick}
           onReport={() => setReportPrompt({
             targetType: 'user',
@@ -1273,22 +1774,58 @@ function AppShell() {
           institution={selectedInstitution!} 
           onBack={goBack} 
           onUserClick={handleUserClick}
+          onOpenHomepage={handleInstitutionHomepageOpen}
           showToast={showToast}
         />
       );
-      case 'share': return <ShareScreen collection={selectedCollection || dataset.collections[0]} currentUser={currentUser!} onBack={goBack} showToast={showToast} />;
+      case 'share': return <ShareScreen collection={selectedCollection || dataset.collections[0]} currentUser={currentUser!} onBack={goBack} onOpenMenu={() => setIsSidebarOpen(true)} showToast={showToast} />;
       case 'legal': return <LegalScreen type={legalType} onBack={goBack} onOpenMenu={() => setIsSidebarOpen(true)} />;
       case 'feeds': return <CustomFeedsScreen onBack={goBack} onOpenFeed={(feedId) => { setActiveHomeFeedId(feedId); navigateTo('home'); }} showToast={showToast} />;
       case 'encryption-keys': return <EncryptionKeysScreen onBack={goBack} showToast={showToast} />;
       case 'trusted-devices': return <TrustedDevicesScreen devices={trustedDevices} onBack={goBack} onRemoveDevice={handleRevokeTrustedDevice} showToast={showToast} />;
-      case 'moderation-center': return <ModerationCenterScreen reports={moderationReports} moderators={moderators} reportActions={moderationActions} onBack={goBack} onOpenReport={handleOpenModerationReport} onAssignReport={handleAssignModerationReport} onEscalateReport={handleEscalateModerationReport} onBulkAction={handleBulkModerationAction} onReviewReport={handleReviewModerationReport} showToast={showToast} />;
+      case 'moderation-center': return <ModerationCenterScreen reports={moderationReports} moderators={moderators} reportActions={moderationActions} productAnnouncements={productAnnouncements} initialReportId={pendingModerationReportId} onConsumeInitialReport={() => setPendingModerationReportId(null)} onBack={goBack} onOpenReport={handleOpenModerationReport} onAssignReport={handleAssignModerationReport} onEscalateReport={handleEscalateModerationReport} onBulkAction={handleBulkModerationAction} onReviewReport={handleReviewModerationReport} onPublishProductAnnouncement={handlePublishProductAnnouncement} showToast={showToast} />;
       case 'help': return <HelpScreen onBack={goBack} onOpenMenu={() => setIsSidebarOpen(true)} onOpenContact={() => navigateTo('contact')} onOpenMessages={() => navigateTo('chat')} onOpenLibrary={() => navigateTo('library')} onOpenFeeds={() => navigateTo('feeds')} onOpenSettings={() => navigateTo('notification-settings')} onOpenHome={() => navigateTo('home')} />;
       case 'contact': return <ContactScreen currentUser={currentUser} onBack={goBack} onOpenMenu={() => setIsSidebarOpen(true)} showToast={showToast} />;
-      case 'chat': return <ChatScreen currentUserId={currentUser!.id} onChatClick={(chat) => { setSelectedChat(chat); navigateTo('chat-detail'); }} onStartChat={handleMessageClick} onBack={goBack} showToast={showToast} />;
-      case 'chat-detail': return <ChatDetailScreen currentUserId={currentUser!.id} chat={selectedChat!} onBack={goBack} onOpenUserProfile={handleUserClick} showToast={showToast} onChatUpdated={(chat) => { setSelectedChat(chat); upsertChatAtTop(chat); }} onReport={() => setReportPrompt({ targetType: 'chat', targetId: selectedChat!.id, targetLabel: 'conversation' })} onBlockUser={handleBlockUser} onUnblockUser={handleUnblockUser} isBlocked={selectedChat!.participants.some(participantId => participantId !== currentUser!.id && blockedUserIds.includes(participantId))} />;
+      case 'chat': return <ChatScreen currentUserId={currentUser!.id} onChatClick={(chat) => openChatConversation(chat)} onStartChat={handleMessageClick} onBack={goBack} showToast={showToast} />;
+      case 'chat-detail': return <ChatDetailScreen currentUserId={currentUser!.id} chat={selectedChat!} launchContext={activeChatEntryContext?.chatId === selectedChat!.id ? activeChatEntryContext : null} onDismissLaunchContext={() => setActiveChatEntryContext(null)} onBack={goBack} onOpenUserProfile={handleUserClick} showToast={showToast} onChatUpdated={(chat) => { setSelectedChat(chat); upsertChatAtTop(chat); }} onReport={() => setReportPrompt({ targetType: 'chat', targetId: selectedChat!.id, targetLabel: 'conversation' })} onBlockUser={handleBlockUser} onUnblockUser={handleUnblockUser} isBlocked={selectedChat!.participants.some(participantId => participantId !== currentUser!.id && blockedUserIds.includes(participantId))} />;
       default: return <HomeScreen onPreprintClick={(p) => { setSelectedPreprint(p); navigateTo('reader'); }} savedPreprints={savedPreprints} onToggleSave={toggleSave} searchQuery={searchQuery} activeFeedId={activeHomeFeedId} onTagClick={handleTagClick} preprints={dataset.preprints} customFeeds={dataset.customFeeds} popularSearches={popularSearches} savedSearches={savedSearches} onSelectFeed={(feedId) => setActiveHomeFeedId(feedId)} onApplyPopularSearch={handleApplyPopularSearch} onSaveSearch={handleSaveCurrentSearch} onDeleteSavedSearch={handleDeleteSavedSearch} onApplySavedSearch={handleApplySavedSearch} showToast={showToast} />;
     }
   };
+
+  const shellHeaderScreens: Screen[] = ['home', 'library', 'notifications', 'trends', 'profile', 'feeds'];
+  const screensWithOwnMenuButton: Screen[] = ['collection-detail', 'share', 'notification-settings', 'security-settings', 'legal', 'help', 'contact'];
+  const authenticatedScreensWithoutBottomNav = new Set<Screen>(['reader']);
+  const showShellHeader = shellHeaderScreens.includes(currentScreen);
+  const showBottomNav = Boolean(currentUser) && !authenticatedScreensWithoutBottomNav.has(currentScreen);
+  const showFloatingMenuButton = Boolean(currentUser)
+    && !showShellHeader
+    && currentScreen !== 'reader'
+    && !screensWithOwnMenuButton.includes(currentScreen)
+    && !isSidebarOpen;
+
+  const isHomeNavActive = currentScreen === 'home' || currentScreen === 'tag-results';
+  const isAlertsNavActive = currentScreen === 'notifications' || currentScreen === 'daily-digest' || currentScreen === 'weekly-digest';
+  const isTrendsNavActive = currentScreen === 'trends' || currentScreen === 'topic-insight' || currentScreen === 'institution-detail';
+  const isChatNavActive = currentScreen === 'chat' || currentScreen === 'chat-detail';
+  const isLibraryNavActive = currentScreen === 'library' || currentScreen === 'collections' || currentScreen === 'collection-detail' || currentScreen === 'share';
+  const isProfileNavActive = [
+    'profile',
+    'edit-profile',
+    'notification-settings',
+    'security-settings',
+    'change-password',
+    '2fa-setup',
+    '2fa-backup',
+    'security-log',
+    'passkeys',
+    'encryption-keys',
+    'trusted-devices',
+    'user-profile',
+    'help',
+    'contact',
+    'legal',
+    'moderation-center',
+  ].includes(currentScreen);
 
   return (
     <div className={`min-h-screen ${isDarkMode ? 'dark' : ''}`}>
@@ -1418,6 +1955,7 @@ function AppShell() {
                 openModerationCount={openModerationCount}
                 onSignOut={handleSignOut}
                 onClose={() => setIsSidebarOpen(false)} 
+                onOpenNotifications={() => { setIsSidebarOpen(false); openNotificationsScreen('all'); }}
                 onNavigate={(s) => { setIsSidebarOpen(false); navigateTo(s); }}
                 onLegal={(type) => { setIsSidebarOpen(false); setLegalType(type); navigateTo('legal'); }}
               />
@@ -1425,8 +1963,24 @@ function AppShell() {
           )}
         </AnimatePresence>
 
+        <AnimatePresence>
+          {showFloatingMenuButton && (
+            <motion.button
+              type="button"
+              initial={{ opacity: 0, scale: 0.92 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.92 }}
+              onClick={() => setIsSidebarOpen(true)}
+              className="absolute right-4 top-4 z-[130] rounded-full border border-slate-200 bg-white/95 p-3 text-primary shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95"
+              aria-label="Open menu"
+            >
+              <Menu className="size-5" />
+            </motion.button>
+          )}
+        </AnimatePresence>
+
         {/* Header */}
-        {['home', 'library', 'notifications', 'trends', 'profile', 'feeds'].includes(currentScreen) ? (
+        {showShellHeader ? (
           <header className="shrink-0 bg-white dark:bg-background-dark border-b border-slate-200 dark:border-slate-800 p-4">
             <div className="flex items-center justify-between mb-4">
               <Menu className="text-primary cursor-pointer" onClick={() => setIsSidebarOpen(true)} />
@@ -1513,14 +2067,14 @@ function AppShell() {
         </main>
 
         {/* Bottom Nav */}
-        {['home', 'library', 'notifications', 'trends', 'profile', 'feeds', 'notification-settings', 'daily-digest', 'weekly-digest', 'topic-insight', 'chat'].includes(currentScreen) ? (
+        {showBottomNav ? (
           <nav className="shrink-0 bg-white dark:bg-background-dark border-t border-slate-200 dark:border-slate-800 flex items-center justify-around p-3 pb-6 relative">
-            <NavItem icon={<Home />} label="Home" active={currentScreen === 'home'} onClick={() => setCurrentScreen('home')} />
-            <NavItem icon={<Bell />} label="Alerts" active={currentScreen === 'notifications'} onClick={() => setCurrentScreen('notifications')} />
-            <NavItem icon={<TrendingUp />} label="Trends" active={currentScreen === 'trends' || currentScreen === 'topic-insight'} onClick={() => setCurrentScreen('trends')} />
-            <NavItem icon={<MessageSquare />} label="Chat" active={currentScreen === 'chat' || currentScreen === 'chat-detail'} onClick={() => setCurrentScreen('chat')} />
-            <NavItem icon={<LibraryIcon />} label="Library" active={currentScreen === 'library'} onClick={() => setCurrentScreen('library')} />
-            <NavItem icon={<UserCircle />} label="Profile" active={currentScreen === 'profile' || currentScreen === 'notification-settings'} onClick={() => setCurrentScreen('profile')} />
+            <NavItem icon={<Home />} label="Home" active={isHomeNavActive} onClick={() => setCurrentScreen('home')} />
+            <NavItem icon={<Bell />} label="Alerts" active={isAlertsNavActive} onClick={() => { setNotificationsTab('all'); setCurrentScreen('notifications'); }} />
+            <NavItem icon={<TrendingUp />} label="Trends" active={isTrendsNavActive} onClick={() => setCurrentScreen('trends')} />
+            <NavItem icon={<MessageSquare />} label="Chat" active={isChatNavActive} onClick={() => setCurrentScreen('chat')} />
+            <NavItem icon={<LibraryIcon />} label="Library" active={isLibraryNavActive} onClick={() => setCurrentScreen('library')} />
+            <NavItem icon={<UserCircle />} label="Profile" active={isProfileNavActive} onClick={() => setCurrentScreen('profile')} />
           </nav>
         ) : currentScreen === 'reader' ? (
           <nav className="shrink-0 bg-white dark:bg-background-dark border-t border-slate-200 dark:border-slate-800 flex justify-around p-3 pb-6">
@@ -1802,7 +2356,60 @@ function isNotificationVisible(notification: Notification, settings: UserSetting
   if (notification.type === 'citation') {
     return settings.citationAlerts;
   }
+  if (notification.type === 'product') {
+    return settings.productUpdates;
+  }
   return true;
+}
+
+function getNotificationCategory(notification: Notification): 'research' | 'network' | 'system' {
+  if (notification.type === 'feed' || notification.type === 'citation') {
+    return 'research';
+  }
+  if (notification.type === 'product' || notification.type === 'moderation' || notification.type === 'account') {
+    return 'system';
+  }
+  if (notification.type === 'message') {
+    return 'network';
+  }
+  return 'network';
+}
+
+function getNotificationLabel(notification: Notification) {
+  if (notification.type === 'feed') {
+    return 'Feed Alert';
+  }
+  if (notification.type === 'citation') {
+    return 'Citation Alert';
+  }
+  if (notification.type === 'collab') {
+    return 'Research Network';
+  }
+  if (notification.type === 'share') {
+    return 'Paper Share';
+  }
+  if (notification.type === 'product') {
+    return 'Product Update';
+  }
+  if (notification.type === 'message') {
+    return 'Direct Message';
+  }
+  if (notification.type === 'moderation') {
+    return 'Moderation Update';
+  }
+  if (notification.type === 'account') {
+    return 'Account Notice';
+  }
+  if (notification.actionUrl?.startsWith('/chat/')) {
+    return 'Direct Message';
+  }
+  if (notification.title.toLowerCase().includes('moderation')) {
+    return 'Moderation Update';
+  }
+  if (notification.title.toLowerCase().includes('blocked')) {
+    return 'Account Notice';
+  }
+  return 'Activity';
 }
 
 function sortPreprintsByRecent(preprints: Preprint[]) {
@@ -1815,6 +2422,13 @@ function sortPreprintsByRecent(preprints: Preprint[]) {
 
 async function copyText(value: string) {
   await navigator.clipboard.writeText(value);
+}
+
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
 }
 
 function downloadTextFile(filename: string, contents: string) {
@@ -1882,6 +2496,33 @@ function slugifyLabel(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+function normalizePersonLabel(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getDerivedHIndex(citations: number[]) {
+  const sorted = [...citations].sort((left, right) => right - left);
+  let hIndex = 0;
+  sorted.forEach((citationCount, index) => {
+    if (citationCount >= index + 1) {
+      hIndex = index + 1;
+    }
+  });
+  return hIndex;
+}
+
+function formatCompactCount(value: number) {
+  if (value < 1000) {
+    return value.toLocaleString();
+  }
+  return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k`;
 }
 
 function getNetworkIcon(label: string) {
@@ -1972,6 +2613,7 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
   const activeFeedKeywords = activeFeed?.keywords ?? [];
   const feedWindowDays = activeFeed ? getFeedFrequencyWindowDays(activeFeed.frequency) : null;
   const feedWindowLabel = activeFeed ? getFeedFrequencyWindowLabel(activeFeed.frequency) : null;
+  const trimmedDeferredSearchQuery = deferredSearchQuery.trim();
 
   const searchStartDate = (() => {
     const now = new Date();
@@ -2003,6 +2645,15 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
       : undefined
   );
   const effectiveSearchEndDate = searchEndDate;
+  const shouldUseRemoteSearch = Boolean(
+    trimmedDeferredSearchQuery
+    || activeFeed
+    || activeSources.length > 0
+    || selectedCategories.length > 0
+    || pubType !== 'All Types'
+    || sortBy !== 'Relevance'
+    || dateRange !== 'All Time'
+  );
 
   const handleToggleSource = (source: string) => {
     if (!activeSources.includes(source)) {
@@ -2104,13 +2755,21 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
   }, [activeFeed]);
 
   useEffect(() => {
+    if (!shouldUseRemoteSearch) {
+      setRemotePreprints(null);
+      setRemoteTotal(null);
+      setSearchError(null);
+      setIsSearchLoading(false);
+      return;
+    }
+
     let cancelled = false;
     const runSearch = async () => {
       try {
         setIsSearchLoading(true);
         setSearchError(null);
         const response = await searchBackendPreprints({
-          query: deferredSearchQuery,
+          query: trimmedDeferredSearchQuery,
           keywords: activeFeedKeywords,
           sources: activeSources,
           categories: selectedCategories,
@@ -2144,7 +2803,8 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
       cancelled = true;
     };
   }, [
-    deferredSearchQuery,
+    trimmedDeferredSearchQuery,
+    shouldUseRemoteSearch,
     activeFeedKeywords,
     activeSources,
     selectedCategories,
@@ -2565,13 +3225,14 @@ function HomeScreen({ onPreprintClick, savedPreprints, onToggleSave, searchQuery
   );
 }
 
-function InstitutionDetailScreen({ institution, onBack, onUserClick, showToast }: { 
+function InstitutionDetailScreen({ institution, onBack, onUserClick, onOpenHomepage, showToast }: { 
   institution: Institution, 
   onBack: () => void, 
   onUserClick: (userId: string) => void,
+  onOpenHomepage: (institutionId: string) => void,
   showToast: (msg: string) => void 
 }) {
-  const { dataset, setDataset } = useAppData();
+  const { dataset } = useAppData();
   const affiliatedUsers = dataset.users.filter(u => u.institutionId === institution.id || u.affiliation === institution.name);
   const affiliatedPublications = dataset.preprints.filter((preprint) => (
     preprint.authors.some((author) => affiliatedUsers.some((user) => user.name === author))
@@ -2626,6 +3287,16 @@ function InstitutionDetailScreen({ institution, onBack, onUserClick, showToast }
             <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
               {institution.description}
             </p>
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => onOpenHomepage(institution.id)}
+                className="inline-flex items-center gap-2 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20"
+              >
+                <Globe className="size-4" />
+                Visit Homepage
+              </button>
+            </div>
           </div>
 
           <div>
@@ -3075,7 +3746,8 @@ function PreprintCard({ preprint, onClick, onToggleSave, onTagClick, onAuthorCli
   );
 }
 
-function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPreprintClick, onTagClick, onAuthorClick, showToast }: { 
+function LibraryScreen({ currentUser, onCollectionClick, savedPreprints, onToggleSave, onPreprintClick, onTagClick, onAuthorClick, showToast }: { 
+  currentUser: User,
   onCollectionClick: (c: Collection) => void, 
   savedPreprints: Preprint[], 
   onToggleSave: (p: Preprint) => void,
@@ -3091,16 +3763,25 @@ function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPrep
   const [isCreating, setIsCreating] = useState(false);
   const [newCollection, setNewCollection] = useState({ name: '', description: '', imageUrl: '' });
   const [searchQuery, setSearchQuery] = useState('');
+  const [collectionScope, setCollectionScope] = useState<'owned' | 'shared'>('owned');
 
   const filteredSaved = savedPreprints.filter((preprint) => matchesPreprintSearchQuery(preprint, searchQuery));
   const sortedSaved = [...filteredSaved].sort((left, right) => {
     if (savedSort === 'rating') {
       return (right.userRating ?? right.rating ?? 0) - (left.userRating ?? left.rating ?? 0);
     }
-    return savedPreprints.findIndex((preprint) => preprint.id === right.id) - savedPreprints.findIndex((preprint) => preprint.id === left.id);
+    return new Date(right.savedAt ?? 0).getTime() - new Date(left.savedAt ?? 0).getTime();
   });
 
-  const sortedCollections = [...dataset.collections]
+  const visibleCollections = dataset.collections.filter((collection) => {
+    const role = getCollectionAccessRole(collection, currentUser);
+    if (collectionScope === 'owned') {
+      return role === 'owner';
+    }
+    return role === 'editor' || role === 'viewer';
+  });
+
+  const sortedCollections = [...visibleCollections]
     .filter((collection) =>
       collection.name.toLowerCase().includes(searchQuery.toLowerCase())
       || (collection.description ?? '').toLowerCase().includes(searchQuery.toLowerCase())
@@ -3109,39 +3790,36 @@ function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPrep
       if (collectionSort === 'name') return a.name.localeCompare(b.name);
       if (collectionSort === 'paperCount') return b.paperCount - a.paperCount;
       if (collectionSort === 'updatedAt') {
-        return b.updatedAt.localeCompare(a.updatedAt);
+        return getCollectionUpdatedAtValue(b.updatedAt) - getCollectionUpdatedAtValue(a.updatedAt);
       }
       return 0;
     });
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!newCollection.name.trim()) {
       showToast('Please enter a collection name');
       return;
     }
-    const createdCollection: Collection = {
-      id: `collection-${Date.now()}`,
-      name: newCollection.name.trim(),
-      description: newCollection.description.trim() || 'Custom collection',
-      preprintIds: [],
-      sharedWith: [],
-      shareLinkToken: `collection-${Date.now().toString(36)}`,
-      paperCount: 0,
-      totalCitations: 0,
-      updatedAt: 'Just now',
-      imageUrl: newCollection.imageUrl.trim() || `https://picsum.photos/seed/${encodeURIComponent(newCollection.name.trim())}/400/400`,
-    };
-    setDataset(prev => ({
-      ...prev,
-      collections: [createdCollection, ...prev.collections],
-      metadata: {
-        ...prev.metadata,
-        lastUpdated: new Date().toISOString(),
-      },
-    }));
-    showToast(`Collection "${newCollection.name}" created!`);
-    setIsCreating(false);
-    setNewCollection({ name: '', description: '', imageUrl: '' });
+    try {
+      const response = await createCollectionRequest({
+        name: newCollection.name.trim(),
+        description: newCollection.description.trim(),
+        imageUrl: newCollection.imageUrl.trim(),
+      });
+      setDataset(prev => ({
+        ...prev,
+        collections: response.collections,
+        metadata: {
+          ...prev.metadata,
+          lastUpdated: new Date().toISOString(),
+        },
+      }));
+      showToast(`Collection "${newCollection.name}" created!`);
+      setIsCreating(false);
+      setNewCollection({ name: '', description: '', imageUrl: '' });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to create collection');
+    }
   };
 
   return (
@@ -3226,6 +3904,28 @@ function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPrep
           </div>
         ) : (
           <div className="space-y-4">
+            <div className="flex gap-2 overflow-x-auto no-scrollbar">
+              <button
+                onClick={() => setCollectionScope('owned')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap border ${
+                  collectionScope === 'owned'
+                    ? 'bg-primary text-white border-primary'
+                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                Owned by You
+              </button>
+              <button
+                onClick={() => setCollectionScope('shared')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap border ${
+                  collectionScope === 'shared'
+                    ? 'bg-primary text-white border-primary'
+                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                Shared with You
+              </button>
+            </div>
             <div className="flex justify-between items-center mb-2">
               <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider">
                 <Filter className="size-3" />
@@ -3249,11 +3949,14 @@ function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPrep
                     <div className="absolute bottom-2 right-2 bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm px-2 py-1 rounded text-[10px] font-bold">
                       {collection.paperCount} Papers
                     </div>
+                    <div className="absolute left-2 top-2 rounded-full bg-white/90 dark:bg-slate-900/90 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-600 dark:text-slate-200">
+                      {getCollectionAccessRole(collection, currentUser) === 'owner' ? 'Owner' : getCollectionAccessRole(collection, currentUser)}
+                    </div>
                   </div>
                   <div>
                     <h3 className="font-bold text-slate-900 dark:text-slate-100 text-sm">{collection.name}</h3>
                     <div className="flex items-center justify-between mt-1">
-                      <p className="text-[10px] text-slate-500">Updated {collection.updatedAt}</p>
+                      <p className="text-[10px] text-slate-500">Updated {formatCollectionUpdatedAt(collection.updatedAt)}</p>
                       {collection.totalCitations && (
                         <div className="flex items-center gap-1 text-[10px] font-bold text-primary">
                           <Quote className="size-2.5" />
@@ -3264,14 +3967,29 @@ function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPrep
                   </div>
                 </div>
               ))}
-              <div 
-                onClick={() => setIsCreating(true)}
-                className="aspect-square rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center gap-2 bg-slate-50 dark:bg-slate-800/50 cursor-pointer hover:border-primary transition-colors"
-              >
-                <Plus className="text-primary size-8" />
-                <span className="text-primary text-xs font-bold uppercase">New Folder</span>
-              </div>
+              {collectionScope === 'owned' && (
+                <div 
+                  onClick={() => setIsCreating(true)}
+                  className="aspect-square rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center gap-2 bg-slate-50 dark:bg-slate-800/50 cursor-pointer hover:border-primary transition-colors"
+                >
+                  <Plus className="text-primary size-8" />
+                  <span className="text-primary text-xs font-bold uppercase">New Folder</span>
+                </div>
+              )}
             </div>
+            {sortedCollections.length === 0 && (
+              <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">
+                <Users className="mx-auto mb-4 size-10 text-slate-300" />
+                <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">
+                  {collectionScope === 'owned' ? 'No collections yet' : 'Nothing shared with you yet'}
+                </h3>
+                <p className="mt-2 text-sm text-slate-500">
+                  {collectionScope === 'owned'
+                    ? 'Create a collection to organize saved papers.'
+                    : 'Collections other researchers share with your account will appear here.'}
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -3354,19 +4072,15 @@ function LibraryScreen({ onCollectionClick, savedPreprints, onToggleSave, onPrep
         )}
       </AnimatePresence>
 
-      <button 
-        onClick={() => setIsCreating(true)}
-        className="absolute right-6 bottom-6 size-14 rounded-full bg-primary text-white shadow-lg flex items-center justify-center hover:scale-105 active:scale-95 transition-transform z-20"
-      >
-        <Plus className="size-8" />
-      </button>
     </div>
   );
 }
 
-function CollectionDetailScreen({ collection, onBack, onShareCollection, savedPreprints, onToggleSave, onPreprintClick, onTagClick, onAuthorClick, showToast }: { 
+function CollectionDetailScreen({ currentUser, collection, onBack, onOpenMenu, onShareCollection, savedPreprints, onToggleSave, onPreprintClick, onTagClick, onAuthorClick, showToast }: { 
+  currentUser: User,
   collection: Collection, 
   onBack: () => void, 
+  onOpenMenu: () => void,
   onShareCollection: () => void,
   savedPreprints: Preprint[], 
   onToggleSave: (p: Preprint) => void,
@@ -3377,6 +4091,11 @@ function CollectionDetailScreen({ collection, onBack, onShareCollection, savedPr
 }) {
   const { dataset, setDataset } = useAppData();
   const collectionRecord = dataset.collections.find((item) => item.id === collection.id) ?? collection;
+  const accessRole = getCollectionAccessRole(collectionRecord, currentUser);
+  const canEditCollection = accessRole === 'owner';
+  const canManagePapers = accessRole === 'owner' || accessRole === 'editor';
+  const collaborators = getCollectionCollaborators(collectionRecord);
+  const owner = dataset.users.find((item) => item.id === collectionRecord.ownerId);
   const [isEditing, setIsEditing] = useState(false);
   const [isManagingPapers, setIsManagingPapers] = useState(false);
   const [filterMode, setFilterMode] = useState<'all' | 'recent'>('all');
@@ -3397,18 +4116,11 @@ function CollectionDetailScreen({ collection, onBack, onShareCollection, savedPr
     });
   }, [collectionRecord.id, collectionRecord.name, collectionRecord.description, collectionRecord.imageUrl]);
 
-  const updateCollectionMembership = (preprintIds: string[]) => {
+  const updateCollectionMembership = async (preprintIds: string[]) => {
+    const response = await updateCollectionPapersRequest(collectionRecord.id, preprintIds);
     setDataset((prev) => ({
       ...prev,
-      collections: prev.collections.map((item) => item.id === collectionRecord.id ? {
-        ...item,
-        preprintIds,
-        paperCount: preprintIds.length,
-        totalCitations: prev.preprints
-          .filter((preprint) => preprintIds.includes(preprint.id))
-          .reduce((sum, preprint) => sum + (preprint.citations ?? 0), 0),
-        updatedAt: 'Just now',
-      } : item),
+      collections: response.collections,
       metadata: {
         ...prev.metadata,
         lastUpdated: new Date().toISOString(),
@@ -3416,12 +4128,16 @@ function CollectionDetailScreen({ collection, onBack, onShareCollection, savedPr
     }));
   };
 
-  const handleToggleCollectionPaper = (preprintId: string) => {
+  const handleToggleCollectionPaper = async (preprintId: string) => {
     const currentIds = collectionRecord.preprintIds ?? [];
     const nextIds = currentIds.includes(preprintId)
       ? currentIds.filter((id) => id !== preprintId)
       : [...currentIds, preprintId];
-    updateCollectionMembership(nextIds);
+    try {
+      await updateCollectionMembership(nextIds);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to update collection papers');
+    }
   };
 
   const handleCopyCollectionLink = async () => {
@@ -3439,27 +4155,24 @@ function CollectionDetailScreen({ collection, onBack, onShareCollection, savedPr
       showToast('Collection name cannot be empty');
       return;
     }
-    setDataset(prev => ({
-      ...prev,
-      collections: prev.collections.map(item =>
-        item.id === collection.id
-          ? {
-              ...item,
-              name: editData.name.trim(),
-              description: editData.description.trim(),
-              imageUrl: editData.imageUrl.trim() || item.imageUrl,
-              shareLinkToken: item.shareLinkToken || item.id,
-              updatedAt: 'Just now',
-            }
-          : item,
-      ),
-      metadata: {
-        ...prev.metadata,
-        lastUpdated: new Date().toISOString(),
-      },
-    }));
-    showToast(`Collection "${editData.name}" updated!`);
-    setIsEditing(false);
+    void updateCollectionRequest(collection.id, {
+      name: editData.name.trim(),
+      description: editData.description.trim(),
+      imageUrl: editData.imageUrl.trim(),
+    }).then((response) => {
+      setDataset(prev => ({
+        ...prev,
+        collections: response.collections,
+        metadata: {
+          ...prev.metadata,
+          lastUpdated: new Date().toISOString(),
+        },
+      }));
+      showToast(`Collection "${editData.name}" updated!`);
+      setIsEditing(false);
+    }).catch((error) => {
+      showToast(error instanceof Error ? error.message : 'Unable to update collection');
+    });
   };
 
   return (
@@ -3470,12 +4183,12 @@ function CollectionDetailScreen({ collection, onBack, onShareCollection, savedPr
           <div className="flex-1">
             <div className="flex items-center gap-2">
               <h2 className="text-xl font-bold">{collectionRecord.name}</h2>
-              <Edit className="size-4 text-slate-400 cursor-pointer hover:text-primary transition-colors" onClick={() => setIsEditing(true)} />
+              {canEditCollection && <Edit className="size-4 text-slate-400 cursor-pointer hover:text-primary transition-colors" onClick={() => setIsEditing(true)} />}
             </div>
             <div className="flex items-center gap-3 text-xs text-slate-500">
               <span>{collectionRecord.paperCount} preprints</span>
               <span>•</span>
-              <span>Updated {collectionRecord.updatedAt}</span>
+              <span>Updated {formatCollectionUpdatedAt(collectionRecord.updatedAt)}</span>
               {collectionRecord.totalCitations && (
                 <>
                   <span>•</span>
@@ -3487,6 +4200,7 @@ function CollectionDetailScreen({ collection, onBack, onShareCollection, savedPr
               )}
             </div>
           </div>
+          <Menu className="text-primary cursor-pointer" onClick={onOpenMenu} />
           <Share2 className="text-primary cursor-pointer" onClick={handleCopyCollectionLink} />
         </div>
         
@@ -3495,6 +4209,22 @@ function CollectionDetailScreen({ collection, onBack, onShareCollection, savedPr
             {collectionRecord.description}
           </p>
         )}
+
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-widest">
+          <span className={`rounded-full px-2 py-1 ${accessRole === 'owner' ? 'bg-primary/10 text-primary' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
+            {accessRole === 'owner' ? 'Owner' : accessRole}
+          </span>
+          {owner && owner.id !== currentUser.id && (
+            <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+              Shared by {owner.name}
+            </span>
+          )}
+          {collaborators.length > 0 && (
+            <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+              {collaborators.length} collaborator{collaborators.length === 1 ? '' : 's'}
+            </span>
+          )}
+        </div>
 
         <div className="flex gap-2 overflow-x-auto no-scrollbar">
           <button 
@@ -3509,17 +4239,19 @@ function CollectionDetailScreen({ collection, onBack, onShareCollection, savedPr
           >
             Recently Added
           </button>
-          <button 
-            onClick={() => setIsManagingPapers(true)}
-            className="bg-slate-100 dark:bg-slate-800 px-4 py-1.5 rounded-lg text-sm font-medium"
-          >
-            Manage Papers
-          </button>
+          {canManagePapers && (
+            <button 
+              onClick={() => setIsManagingPapers(true)}
+              className="bg-slate-100 dark:bg-slate-800 px-4 py-1.5 rounded-lg text-sm font-medium"
+            >
+              Manage Papers
+            </button>
+          )}
           <button
             onClick={onShareCollection}
             className="bg-slate-100 dark:bg-slate-800 px-4 py-1.5 rounded-lg text-sm font-medium"
           >
-            Share Access
+            {accessRole === 'owner' ? 'Share Access' : 'View Access'}
           </button>
         </div>
       </div>
@@ -3542,18 +4274,20 @@ function CollectionDetailScreen({ collection, onBack, onShareCollection, savedPr
             <BookMarked className="mx-auto mb-4 size-10 text-slate-300" />
             <h3 className="text-lg font-bold">This collection is empty</h3>
             <p className="mt-2 text-sm text-slate-500">Add saved papers to turn this into a real working collection.</p>
-            <button
-              onClick={() => setIsManagingPapers(true)}
-              className="mt-4 rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white"
-            >
-              Add Saved Papers
-            </button>
+            {canManagePapers && (
+              <button
+                onClick={() => setIsManagingPapers(true)}
+                className="mt-4 rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white"
+              >
+                Add Saved Papers
+              </button>
+            )}
           </div>
         )}
       </div>
 
       <AnimatePresence>
-        {isManagingPapers && (
+        {isManagingPapers && canManagePapers && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -4316,73 +5050,152 @@ function ReaderScreen({ preprint, currentUser, onBack, onToggleSave, isSaved, on
   );
 }
 
-function ProfileScreen({ currentUser, onEdit, onSettings, onSignOut, onInstitutionClick, onUserClick, preprints, showToast }: { currentUser: User, onEdit: () => void, onSettings: () => void, onSignOut: () => void, onInstitutionClick: (id: string) => void, onUserClick: (userId: string) => void, preprints: Preprint[], showToast: (msg: string) => void }) {
-  const { dataset } = useAppData();
+function ProfileScreen({ currentUser, onEdit, onSettings, onSignOut, onInstitutionClick, onInstitutionHomepageOpen, onUserClick, onPreprintClick, onRefreshSession, preprints, showToast }: { currentUser: User, onEdit: () => void, onSettings: () => void, onSignOut: () => void, onInstitutionClick: (id: string) => void, onInstitutionHomepageOpen: (id: string) => void, onUserClick: (userId: string) => void, onPreprintClick: (preprint: Preprint) => void, onRefreshSession: () => Promise<unknown>, preprints: Preprint[], showToast: (msg: string, type?: 'success' | 'info') => void }) {
+  const { dataset, importDataset } = useAppData();
   const [isEditingPublications, setIsEditingPublications] = useState(false);
   const [isAddingNetwork, setIsAddingNetwork] = useState(false);
   const [isAddingPublication, setIsAddingPublication] = useState(false);
+  const [isImportingPublications, setIsImportingPublications] = useState(false);
+  const [showPublicationImport, setShowPublicationImport] = useState(false);
+  const [publicationImportSource, setPublicationImportSource] = useState<'orcid' | 'arxiv'>('orcid');
+  const [publicationImportAuthorName, setPublicationImportAuthorName] = useState(currentUser.name);
+  const [publicationImportOrcidId, setPublicationImportOrcidId] = useState(currentUser.orcidId ?? '');
+  const [publicationImportMaxResults, setPublicationImportMaxResults] = useState(10);
   const [networkLabels, setNetworkLabels] = useState<string[]>(['ORCID', 'LinkedIn', 'Twitter']);
   const [newNetworkLabel, setNewNetworkLabel] = useState('');
   const [manualPublicationIds, setManualPublicationIds] = useState<string[]>([]);
+  const [hiddenPublicationIds, setHiddenPublicationIds] = useState<string[]>([]);
   const [selectedPublicationId, setSelectedPublicationId] = useState('');
   const [userListModal, setUserListModal] = useState<{ title: string, users: UserListEntry[] } | null>(null);
+  const [followerUsers, setFollowerUsers] = useState<User[]>([]);
+  const [followingUsers, setFollowingUsers] = useState<User[]>([]);
+  const [isLoadingConnections, setIsLoadingConnections] = useState(false);
+  const [showProfileImage, setShowProfileImage] = useState(false);
   const publicationSectionRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const customization = storageService.getProfileCustomization(currentUser.id);
     setManualPublicationIds(customization.manualPublicationIds);
+    setHiddenPublicationIds(customization.hiddenPublicationIds);
     setNetworkLabels(['ORCID', 'LinkedIn', 'Twitter', ...customization.networkLabels.filter((label) => !['orcid', 'linkedin', 'twitter'].includes(label.toLowerCase()))]);
   }, [currentUser.id]);
 
   useEffect(() => {
+    setPublicationImportAuthorName(currentUser.name);
+    setPublicationImportOrcidId(currentUser.orcidId ?? '');
+  }, [currentUser.id, currentUser.name, currentUser.orcidId]);
+
+  useEffect(() => {
     storageService.saveProfileCustomization(currentUser.id, {
       manualPublicationIds,
+      hiddenPublicationIds,
       networkLabels: networkLabels.filter((label) => !['orcid', 'linkedin', 'twitter'].includes(label.toLowerCase())),
     });
-  }, [currentUser.id, manualPublicationIds, networkLabels]);
+  }, [currentUser.id, manualPublicationIds, hiddenPublicationIds, networkLabels]);
 
-  const userPublications = preprints.filter((preprint) => {
-    if (manualPublicationIds.includes(preprint.id)) {
-      return true;
-    }
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoadingConnections(true);
+    fetchUserConnections(currentUser.id)
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setFollowerUsers(response.followers);
+        setFollowingUsers(response.following);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setFollowerUsers([]);
+        setFollowingUsers([]);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingConnections(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser.id]);
+
+  const normalizedCurrentUserName = normalizePersonLabel(currentUser.name);
+  const isBasePublication = (preprint: Preprint) => {
     if (currentUser.publications?.includes(preprint.id)) {
       return true;
     }
-    return preprint.authors.some((author) => author.includes(currentUser.name));
-  });
+    return preprint.authors.some((author) => {
+      const normalizedAuthor = normalizePersonLabel(author);
+      return normalizedAuthor === normalizedCurrentUserName
+        || normalizedAuthor.includes(normalizedCurrentUserName)
+        || normalizedCurrentUserName.includes(normalizedAuthor);
+    });
+  };
+  const userPublications = sortPreprintsByRecent(preprints.filter((preprint) => {
+    if (manualPublicationIds.includes(preprint.id)) {
+      return true;
+    }
+    if (hiddenPublicationIds.includes(preprint.id)) {
+      return false;
+    }
+    return isBasePublication(preprint);
+  }));
   const availablePublicationOptions = preprints.filter((preprint) => !userPublications.some((existing) => existing.id === preprint.id));
-  const likelyFollowers = dataset.users
-    .filter((user) => user.id !== currentUser.id)
-    .sort((left, right) => right.followers - left.followers)
-    .slice(0, Math.max(currentUser.followers, 3))
-    .map((user) => user.name);
-  const likelyFollowing = dataset.users
-    .filter((user) => user.id !== currentUser.id)
-    .sort((left, right) => (right.isFollowing ? 1 : 0) - (left.isFollowing ? 1 : 0) || right.stats.citations - left.stats.citations)
-    .slice(0, Math.max(currentUser.following, 3))
-    .map((user) => user.name);
-  const citationContacts = [...new Set([
-    ...dataset.users.filter((user) => user.id !== currentUser.id).sort((left, right) => right.stats.citations - left.stats.citations).slice(0, 4).map((user) => user.name),
-    ...userPublications.flatMap((preprint) => preprint.citedBy ?? []),
-  ])].slice(0, 8);
+  const citationCounts = userPublications.map((preprint) => preprint.citations ?? 0);
+  const derivedCitationCount = citationCounts.reduce((total, citationCount) => total + citationCount, 0);
+  const derivedHIndex = getDerivedHIndex(citationCounts);
+  const derivedI10Index = citationCounts.filter((citationCount) => citationCount >= 10).length;
+  const citationContacts = Array.from(new Map(
+    userPublications.flatMap((preprint) => (preprint.citedBy ?? []).map((citation) => {
+      const matchedUser = dataset.users.find((user) => user.id === citation || user.name === citation);
+      return [
+        matchedUser?.id ?? citation,
+        {
+          id: matchedUser?.id ?? citation,
+          label: matchedUser?.name ?? citation,
+          lookupValue: matchedUser?.id ?? citation,
+          meta: 'Cited your work',
+        } satisfies UserListEntry,
+      ] as const;
+    })),
+  ).values());
 
   const handleRemovePublication = (preprintId: string) => {
     setManualPublicationIds((current) => current.filter((id) => id !== preprintId));
+    const preprint = preprints.find((item) => item.id === preprintId);
+    if (preprint && isBasePublication(preprint)) {
+      setHiddenPublicationIds((current) => current.includes(preprintId) ? current : [...current, preprintId]);
+    }
     showToast('Publication hidden from your profile view.');
   };
 
   const handleAddNetwork = () => {
     const normalizedLabel = newNetworkLabel.trim();
-    if (normalizedLabel) {
-      if (networkLabels.some((label) => label.toLowerCase() === normalizedLabel.toLowerCase())) {
-        showToast(`${normalizedLabel} is already in your network.`);
-        return;
-      }
-      setNetworkLabels([...networkLabels, normalizedLabel]);
-      setNewNetworkLabel('');
-      setIsAddingNetwork(false);
-      showToast(`Added ${normalizedLabel} to your network.`);
+    if (!normalizedLabel) {
+      showToast('Enter a network name first.', 'info');
+      return;
     }
+    if (networkLabels.some((label) => label.toLowerCase() === normalizedLabel.toLowerCase())) {
+      showToast(`${normalizedLabel} is already in your network.`);
+      return;
+    }
+    setNetworkLabels([...networkLabels, normalizedLabel]);
+    setNewNetworkLabel('');
+    setIsAddingNetwork(false);
+    showToast(`Added ${normalizedLabel} to your network.`);
+  };
+
+  const handleRemoveNetwork = (label: string) => {
+    const normalized = label.toLowerCase();
+    if (['orcid', 'linkedin', 'twitter'].includes(normalized)) {
+      showToast(`${label} is a default network and cannot be removed.`, 'info');
+      return;
+    }
+    setNetworkLabels((current) => current.filter((item) => item !== label));
+    showToast(`Removed ${label} from your network.`);
   };
 
   const handleAddPublication = () => {
@@ -4390,10 +5203,48 @@ function ProfileScreen({ currentUser, onEdit, onSettings, onSignOut, onInstituti
       showToast('Choose a publication first.');
       return;
     }
-    setManualPublicationIds((current) => [...current, selectedPublicationId]);
+    const selectedPreprint = preprints.find((preprint) => preprint.id === selectedPublicationId);
+    const shouldRestoreBasePublication = selectedPreprint ? isBasePublication(selectedPreprint) : false;
+    setHiddenPublicationIds((current) => current.filter((id) => id !== selectedPublicationId));
+    if (!shouldRestoreBasePublication) {
+      setManualPublicationIds((current) => current.includes(selectedPublicationId) ? current : [...current, selectedPublicationId]);
+    }
     setSelectedPublicationId('');
     setIsAddingPublication(false);
     showToast('Publication added to your profile view.');
+  };
+
+  const handleImportPublications = async () => {
+    try {
+      setIsImportingPublications(true);
+      const response = await importProfilePublications({
+        source: publicationImportSource,
+        authorName: publicationImportAuthorName.trim() || currentUser.name,
+        orcidId: publicationImportSource === 'orcid' ? publicationImportOrcidId.trim() : undefined,
+        maxResults: publicationImportMaxResults,
+      });
+      importDataset(JSON.stringify({
+        ...dataset,
+        preprints: response.dataset.preprints,
+        metadata: {
+          ...dataset.metadata,
+          sourceLabel: response.dataset.sourceLabel,
+          isImported: true,
+          lastUpdated: new Date().toISOString(),
+        },
+      }));
+      await onRefreshSession();
+      showToast(
+        response.imported > 0
+          ? `Imported ${response.imported} publications from ${response.sourceLabel}.`
+          : `No new publications were found from ${response.sourceLabel}.`,
+        response.imported > 0 ? 'success' : 'info',
+      );
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to import publications', 'info');
+    } finally {
+      setIsImportingPublications(false);
+    }
   };
 
   const scrollToPublications = () => {
@@ -4404,7 +5255,7 @@ function ProfileScreen({ currentUser, onEdit, onSettings, onSignOut, onInstituti
     const normalized = label.toLowerCase();
     const encodedName = encodeURIComponent(currentUser.name);
     if (normalized === 'orcid') {
-      window.open(`https://orcid.org/orcid-search/search?searchQuery=${encodedName}`, '_blank', 'noopener,noreferrer');
+      window.open(currentUser.orcidId ? `https://orcid.org/${currentUser.orcidId}` : `https://orcid.org/orcid-search/search?searchQuery=${encodedName}`, '_blank', 'noopener,noreferrer');
       return;
     }
     if (normalized === 'linkedin') {
@@ -4429,28 +5280,57 @@ function ProfileScreen({ currentUser, onEdit, onSettings, onSignOut, onInstituti
     showToast(`${userLookup} copied to clipboard`);
   };
 
+  const openConnectionList = (title: string, users: User[], emptyLabel: string) => {
+    if (users.length === 0) {
+      showToast(isLoadingConnections ? 'Loading profile connections…' : emptyLabel, 'info');
+      return;
+    }
+    setUserListModal({
+      title,
+      users: users.map((user) => ({
+        id: user.id,
+        label: user.name,
+        lookupValue: user.id,
+        meta: user.affiliation,
+      })),
+    });
+  };
+
   return (
     <div className="flex flex-col h-full p-6 pb-24 overflow-y-auto no-scrollbar">
       <div className="flex flex-col items-center text-center mb-8">
-        <button type="button" onClick={onEdit} className="relative mb-4 group cursor-pointer">
+        <div className="relative mb-4">
+          <button type="button" onClick={() => setShowProfileImage(true)} className="group cursor-zoom-in">
           <img 
             src={currentUser.imageUrl} 
             alt={currentUser.name} 
             className="size-32 rounded-full border-4 border-primary/10 object-cover group-hover:opacity-90 transition-opacity"
           />
-          <div className="absolute bottom-1 right-1 bg-primary text-white p-1 rounded-full border-2 border-white dark:border-slate-900">
+          </button>
+          <button type="button" onClick={onEdit} className="absolute bottom-1 right-1 bg-primary text-white p-1 rounded-full border-2 border-white shadow-lg dark:border-slate-900" aria-label="Edit profile">
             <ShieldCheck className="size-4" />
-          </div>
-        </button>
+          </button>
+        </div>
         <h1 className="text-2xl font-bold">{currentUser.name}</h1>
         <p className="text-primary font-medium text-sm">{currentUser.title || currentUser.affiliation}</p>
-        <button 
-          onClick={() => onInstitutionClick(currentUser.institutionId || currentUser.affiliation)}
-          className="text-slate-500 text-sm hover:text-primary hover:underline transition-colors flex items-center gap-1"
-        >
-          {currentUser.affiliation}
-          {currentUser.isAffiliationVerified && <CheckCircle2 className="size-3 text-emerald-500" />}
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => onInstitutionClick(currentUser.institutionId || currentUser.affiliation)}
+            className="text-slate-500 text-sm hover:text-primary hover:underline transition-colors flex items-center gap-1"
+          >
+            {currentUser.affiliation}
+            {currentUser.isAffiliationVerified && <CheckCircle2 className="size-3 text-emerald-500" />}
+          </button>
+          <button
+            type="button"
+            onClick={() => onInstitutionHomepageOpen(currentUser.institutionId || currentUser.affiliation)}
+            className="rounded-full p-1.5 text-primary transition-colors hover:bg-primary/10"
+            aria-label="Open institution homepage"
+            title="Open institution homepage"
+          >
+            <Globe className="size-4" />
+          </button>
+        </div>
         <div className="flex gap-3 mt-6 w-full">
           <button onClick={onEdit} className="flex-1 bg-primary text-white py-2.5 rounded-lg font-bold text-sm shadow-lg shadow-primary/20">Edit Profile</button>
           <button onClick={onSettings} className="px-4 border border-slate-200 dark:border-slate-700 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
@@ -4469,36 +5349,36 @@ function ProfileScreen({ currentUser, onEdit, onSettings, onSignOut, onInstituti
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Preprints</p>
         </div>
         <div 
-          onClick={() => setUserListModal({ title: 'Your Citations', users: citationContacts.map((user) => ({ id: user, label: user })) })}
+          onClick={() => setUserListModal({ title: 'Your Citations', users: citationContacts })}
           className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
         >
-          <p className="text-2xl font-bold text-primary">{currentUser.stats.citations.toLocaleString()}</p>
+          <p className="text-2xl font-bold text-primary">{derivedCitationCount.toLocaleString()}</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Citations</p>
         </div>
         <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center">
-          <p className="text-2xl font-bold text-primary">{currentUser.stats.hIndex || 0}</p>
+          <p className="text-2xl font-bold text-primary">{derivedHIndex}</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">h-index</p>
         </div>
         <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-center">
-          <p className="text-2xl font-bold text-primary">{currentUser.stats.i10Index || 0}</p>
+          <p className="text-2xl font-bold text-primary">{derivedI10Index}</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">i10-index</p>
         </div>
       </div>
 
       <div className="flex items-center justify-center gap-8 mb-8 text-center">
         <div 
-          onClick={() => setUserListModal({ title: 'Your Followers', users: likelyFollowers.map((user) => ({ id: user, label: user })) })}
+          onClick={() => openConnectionList('Your Followers', followerUsers, 'You do not have any visible followers yet.')}
           className="cursor-pointer group"
         >
-          <p className="text-lg font-bold group-hover:text-primary transition-colors">{currentUser.followers.toLocaleString()}</p>
+          <p className="text-lg font-bold group-hover:text-primary transition-colors">{followerUsers.length.toLocaleString()}</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Followers</p>
         </div>
         <div className="w-px h-8 bg-slate-200 dark:bg-slate-700"></div>
         <div 
-          onClick={() => setUserListModal({ title: 'Following', users: likelyFollowing.map((user) => ({ id: user, label: user })) })}
+          onClick={() => openConnectionList('Following', followingUsers, 'You are not following any visible profiles yet.')}
           className="cursor-pointer group"
         >
-          <p className="text-lg font-bold group-hover:text-primary transition-colors">{currentUser.following.toLocaleString()}</p>
+          <p className="text-lg font-bold group-hover:text-primary transition-colors">{followingUsers.length.toLocaleString()}</p>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Following</p>
         </div>
       </div>
@@ -4521,27 +5401,59 @@ function ProfileScreen({ currentUser, onEdit, onSettings, onSignOut, onInstituti
           </button>
         </div>
         <div className="space-y-3">
-          {userPublications.map(p => (
-            <div key={p.id} className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          {userPublications.length > 0 ? userPublications.map(p => (
+            <div
+              key={p.id}
+              role={isEditingPublications ? undefined : 'button'}
+              tabIndex={isEditingPublications ? -1 : 0}
+              onClick={() => {
+                if (!isEditingPublications) {
+                  onPreprintClick(p);
+                }
+              }}
+              onKeyDown={(event) => {
+                if (!isEditingPublications && (event.key === 'Enter' || event.key === ' ')) {
+                  event.preventDefault();
+                  onPreprintClick(p);
+                }
+              }}
+              className={`w-full p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 flex items-center justify-between text-left ${isEditingPublications ? '' : 'cursor-pointer hover:border-primary/30 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors'}`}
+            >
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-bold truncate">{p.title}</p>
                 <p className="text-[10px] text-slate-500">{p.date} • {p.source}</p>
               </div>
               {isEditingPublications && (
                 <button 
-                  onClick={() => handleRemovePublication(p.id)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleRemovePublication(p.id);
+                  }}
                   className="p-1 text-red-500 hover:bg-red-50 rounded"
                 >
                   <X className="size-4" />
                 </button>
               )}
+              {!isEditingPublications && (
+                <ChevronRight className="size-4 text-slate-300" />
+              )}
             </div>
-          ))}
+          )) : (
+            <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500 dark:border-slate-800">
+              No publications are linked to your profile yet.
+            </div>
+          )}
           {isEditingPublications && (
-            <button onClick={() => setIsAddingPublication((current) => !current)} className="w-full py-3 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl text-slate-400 text-xs font-bold flex items-center justify-center gap-2 hover:border-primary hover:text-primary transition-colors">
-              <Plus className="size-4" />
-              {isAddingPublication ? 'Hide Publication Picker' : 'Add Publication Manually'}
-            </button>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button onClick={() => setIsAddingPublication((current) => !current)} className="w-full py-3 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl text-slate-400 text-xs font-bold flex items-center justify-center gap-2 hover:border-primary hover:text-primary transition-colors">
+                <Plus className="size-4" />
+                {isAddingPublication ? 'Hide Publication Picker' : 'Add Existing Publication'}
+              </button>
+              <button onClick={() => setShowPublicationImport((current) => !current)} className="w-full py-3 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl text-slate-400 text-xs font-bold flex items-center justify-center gap-2 hover:border-primary hover:text-primary transition-colors">
+                <Download className="size-4" />
+                {showPublicationImport ? 'Hide Import Tools' : 'Import from ORCID or arXiv'}
+              </button>
+            </div>
           )}
           {isEditingPublications && isAddingPublication && (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800">
@@ -4557,6 +5469,70 @@ function ProfileScreen({ currentUser, onEdit, onSettings, onSignOut, onInstituti
                   Add
                 </button>
               </div>
+            </div>
+          )}
+          {isEditingPublications && showPublicationImport && (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800 space-y-4">
+              <div>
+                <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-slate-400">Import Source</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {(['orcid', 'arxiv'] as const).map((source) => (
+                    <button
+                      key={source}
+                      type="button"
+                      onClick={() => setPublicationImportSource(source)}
+                      className={`rounded-xl border px-3 py-3 text-sm font-bold transition-colors ${publicationImportSource === source ? 'border-primary bg-primary/10 text-primary' : 'border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300'}`}
+                    >
+                      {source === 'orcid' ? 'ORCID' : 'arXiv'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-slate-400">Author Name</label>
+                <input
+                  type="text"
+                  value={publicationImportAuthorName}
+                  onChange={(event) => setPublicationImportAuthorName(event.target.value)}
+                  placeholder="Researcher name"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                />
+              </div>
+              {publicationImportSource === 'orcid' && (
+                <div>
+                  <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-slate-400">ORCID iD</label>
+                  <input
+                    type="text"
+                    value={publicationImportOrcidId}
+                    onChange={(event) => setPublicationImportOrcidId(event.target.value)}
+                    placeholder="0000-0000-0000-0000"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                  />
+                </div>
+              )}
+              <div>
+                <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-slate-400">Maximum Results</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={publicationImportMaxResults}
+                  onChange={(event) => setPublicationImportMaxResults(Math.min(50, Math.max(1, Number(event.target.value) || 1)))}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                />
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+                Google Scholar import is intentionally not enabled here because it does not offer a stable supported public API for production use.
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleImportPublications()}
+                disabled={isImportingPublications || !publicationImportAuthorName.trim() || (publicationImportSource === 'orcid' && !publicationImportOrcidId.trim())}
+                className="w-full rounded-xl bg-primary px-4 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {isImportingPublications ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />}
+                {isImportingPublications ? 'Importing Publications…' : `Import from ${publicationImportSource === 'orcid' ? 'ORCID' : 'arXiv'}`}
+              </button>
             </div>
           )}
         </div>
@@ -4575,7 +5551,7 @@ function ProfileScreen({ currentUser, onEdit, onSettings, onSignOut, onInstituti
         
         <div className="grid grid-cols-3 gap-3">
           {networkLabels.map((label) => (
-            <SocialLink key={label} icon={getNetworkIcon(label)} label={label} onClick={() => void handleNetworkLink(label)} />
+            <SocialLink key={label} icon={getNetworkIcon(label)} label={label} onClick={() => void handleNetworkLink(label)} onRemove={!['orcid', 'linkedin', 'twitter'].includes(label.toLowerCase()) ? () => handleRemoveNetwork(label) : undefined} />
           ))}
         </div>
 
@@ -4624,25 +5600,66 @@ function ProfileScreen({ currentUser, onEdit, onSettings, onSignOut, onInstituti
           onClose={() => setUserListModal(null)} 
         />
       )}
+      <AnimatePresence>
+        {showProfileImage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm"
+            onClick={() => setShowProfileImage(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              className="relative w-full max-w-lg"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => setShowProfileImage(false)}
+                className="absolute right-3 top-3 z-10 rounded-full bg-black/55 p-2 text-white"
+              >
+                <X className="size-5" />
+              </button>
+              <img src={currentUser.imageUrl} alt={currentUser.name} className="w-full rounded-3xl object-cover shadow-2xl" referrerPolicy="no-referrer" />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function SocialLink({ icon, label, onClick }: { icon: React.ReactNode, label: string, onClick: () => void, key?: any }) {
+function SocialLink({ icon, label, onClick, onRemove }: { icon: React.ReactNode, label: string, onClick: () => void, onRemove?: () => void, key?: any }) {
   return (
-    <button type="button" onClick={onClick} className="flex flex-col items-center gap-2 rounded-xl bg-slate-50 p-3 transition-colors hover:bg-slate-100 dark:bg-slate-800/50">
-      <div className="size-10 flex items-center justify-center rounded-full bg-white dark:bg-slate-700 shadow-sm text-primary">
-        {icon}
-      </div>
-      <span className="text-[10px] font-bold">{label}</span>
-    </button>
+    <div className="relative">
+      <button type="button" onClick={onClick} className="flex w-full flex-col items-center gap-2 rounded-xl bg-slate-50 p-3 transition-colors hover:bg-slate-100 dark:bg-slate-800/50">
+        <div className="size-10 flex items-center justify-center rounded-full bg-white dark:bg-slate-700 shadow-sm text-primary">
+          {icon}
+        </div>
+        <span className="text-[10px] font-bold">{label}</span>
+      </button>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="absolute right-1 top-1 rounded-full bg-white/90 p-1 text-slate-400 shadow-sm transition-colors hover:text-red-500 dark:bg-slate-700/90"
+          aria-label={`Remove ${label}`}
+        >
+          <X className="size-3" />
+        </button>
+      )}
+    </div>
   );
 }
 
-function EditProfileScreen({ currentUser, onBack, onSaveProfile, showToast }: { currentUser: User, onBack: () => void, onSaveProfile: (payload: { name: string; email: string; affiliation: string; bio: string; title: string; imageUrl: string; isAffiliationVerified?: boolean; currentPassword?: string; }) => Promise<void>, showToast: (msg: string, type?: 'success' | 'info') => void }) {
+function EditProfileScreen({ currentUser, onBack, onSaveProfile, showToast }: { currentUser: User, onBack: () => void, onSaveProfile: (payload: { name: string; email: string; orcidId?: string; affiliation: string; bio: string; title: string; imageUrl: string; isAffiliationVerified?: boolean; currentPassword?: string; }) => Promise<void>, showToast: (msg: string, type?: 'success' | 'info') => void }) {
   const { dataset } = useAppData();
   const [name, setName] = useState(currentUser.name);
   const [email, setEmail] = useState(currentUser.email ?? '');
+  const [orcidId, setOrcidId] = useState(currentUser.orcidId ?? '');
   const [affiliation, setAffiliation] = useState(currentUser.affiliation);
   const [title, setTitle] = useState(currentUser.title ?? currentUser.affiliation);
   const [bio, setBio] = useState(currentUser.bio);
@@ -4658,7 +5675,7 @@ function EditProfileScreen({ currentUser, onBack, onSaveProfile, showToast }: { 
   const handleSave = async () => {
     try {
       setIsSaving(true);
-      await onSaveProfile({ name, email, affiliation, bio, title, imageUrl, isAffiliationVerified });
+      await onSaveProfile({ name, email, orcidId, affiliation, bio, title, imageUrl, isAffiliationVerified });
       showToast('Profile updated successfully!');
       onBack();
     } catch (error) {
@@ -4793,6 +5810,18 @@ function EditProfileScreen({ currentUser, onBack, onSaveProfile, showToast }: { 
           </div>
 
           <div className="space-y-2">
+            <label className="text-sm font-semibold">ORCID iD</label>
+            <input
+              type="text"
+              value={orcidId}
+              onChange={(e) => setOrcidId(e.target.value)}
+              placeholder="0000-0000-0000-0000"
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-primary/50"
+            />
+            <p className="text-xs text-slate-400">Used to prefill publication imports and open your ORCID profile directly.</p>
+          </div>
+
+          <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="text-sm font-semibold">Academic Affiliation</label>
               {isAffiliationVerified ? (
@@ -4836,7 +5865,7 @@ function EditProfileScreen({ currentUser, onBack, onSaveProfile, showToast }: { 
   );
 }
 
-function UserProfileScreen({ user, currentUserId, onBack, onPreprintClick, onToggleSave, onToggleFollow, onTagClick, onAuthorClick, onInstitutionClick, onMessage, onReport, onBlockUser, onUnblockUser, isBlocked, savedPreprints, showToast }: { 
+function UserProfileScreen({ user, currentUserId, onBack, onPreprintClick, onToggleSave, onToggleFollow, onTagClick, onAuthorClick, onInstitutionClick, onInstitutionHomepageOpen, onMessage, onReport, onBlockUser, onUnblockUser, isBlocked, savedPreprints, showToast }: { 
   user: User, 
   currentUserId: string,
   onBack: () => void, 
@@ -4846,6 +5875,7 @@ function UserProfileScreen({ user, currentUserId, onBack, onPreprintClick, onTog
   onTagClick: (tag: string) => void,
   onAuthorClick: (author: string) => void,
   onInstitutionClick: (id: string) => void,
+  onInstitutionHomepageOpen: (id: string) => void,
   onMessage: (user: User) => void,
   onReport: () => void,
   onBlockUser: (userId: string) => Promise<void>,
@@ -4857,13 +5887,82 @@ function UserProfileScreen({ user, currentUserId, onBack, onPreprintClick, onTog
   const { dataset } = useAppData();
   const [isFollowing, setIsFollowing] = useState(user.isFollowing);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const userPreprints = dataset.preprints.filter(
-    p => p.authors.includes(user.name) || p.authors.some(a => user.name.includes(a)),
-  );
+  const [userListModal, setUserListModal] = useState<{ title: string; users: UserListEntry[] } | null>(null);
+  const [showProfileImage, setShowProfileImage] = useState(false);
+  const [followerUsers, setFollowerUsers] = useState<User[]>([]);
+  const [followingUsers, setFollowingUsers] = useState<User[]>([]);
+  const [isLoadingConnections, setIsLoadingConnections] = useState(false);
+  const normalizedUserName = normalizePersonLabel(user.name);
+  const userPreprints = sortPreprintsByRecent(dataset.preprints.filter((preprint) => {
+    if (user.publications.includes(preprint.id)) {
+      return true;
+    }
+    return preprint.authors.some((author) => {
+      const normalizedAuthor = normalizePersonLabel(author);
+      return normalizedAuthor === normalizedUserName
+        || normalizedAuthor.includes(normalizedUserName)
+        || normalizedUserName.includes(normalizedAuthor);
+    });
+  }));
+  const citationCounts = userPreprints.map((preprint) => preprint.citations ?? 0);
+  const derivedPublicationCount = userPreprints.length;
+  const derivedCitations = citationCounts.reduce((total, citationCount) => total + citationCount, 0);
+  const derivedHIndex = getDerivedHIndex(citationCounts);
+  const derivedI10Index = citationCounts.filter((citationCount) => citationCount >= 10).length;
+  const hasDerivedPublicationStats = derivedPublicationCount > 0;
+  const publicationCount = hasDerivedPublicationStats ? derivedPublicationCount : (user.stats.totalPublications || user.stats.preprints);
+  const citationCount = hasDerivedPublicationStats ? derivedCitations : user.stats.citations;
+  const hIndex = hasDerivedPublicationStats ? derivedHIndex : (user.stats.hIndex || 0);
+  const i10Index = hasDerivedPublicationStats ? derivedI10Index : (user.stats.i10Index || 0);
+  const profileUrl = `${window.location.origin}/?profile=${user.id}`;
+  const institutionRecord = dataset.institutions.find((institution) => institution.id === user.institutionId || institution.name === user.affiliation);
+  const citationContacts = Array.from(new Map(
+    userPreprints.flatMap((preprint) => (preprint.citedBy ?? []).map((citation) => {
+      const matchedUser = dataset.users.find((datasetUser) => datasetUser.id === citation || datasetUser.name === citation);
+      return [
+        matchedUser?.id ?? citation,
+        {
+          id: matchedUser?.id ?? citation,
+          label: matchedUser?.name ?? citation,
+          lookupValue: matchedUser?.id ?? citation,
+          meta: 'Cited this researcher',
+        } satisfies UserListEntry,
+      ] as const;
+    })),
+  ).values());
 
   useEffect(() => {
     setIsFollowing(user.isFollowing);
   }, [user.isFollowing]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoadingConnections(true);
+    fetchUserConnections(user.id)
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setFollowerUsers(response.followers);
+        setFollowingUsers(response.following);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setFollowerUsers([]);
+        setFollowingUsers([]);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingConnections(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user.id]);
 
   const handleFollow = async () => {
     if (user.id === currentUserId) {
@@ -4912,6 +6011,48 @@ function UserProfileScreen({ user, currentUserId, onBack, onPreprintClick, onTog
     onAuthorClick(author);
   };
 
+  const handleProfileShare = async () => {
+    await copyText(profileUrl);
+    showToast('Profile link copied to clipboard');
+  };
+
+  const handleInstitutionAction = async () => {
+    if (institutionRecord) {
+      onInstitutionClick(institutionRecord.id);
+      return;
+    }
+    onInstitutionClick(user.affiliation);
+  };
+
+  const handleNetworkLink = (network: 'orcid' | 'linkedin' | 'twitter') => {
+    const query = encodeURIComponent(`${user.name} ${user.affiliation}`.trim());
+    if (network === 'orcid') {
+      window.open(user.orcidId ? `https://orcid.org/${user.orcidId}` : `https://orcid.org/orcid-search/search?searchQuery=${query}`, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (network === 'linkedin') {
+      window.open(`https://www.linkedin.com/search/results/all/?keywords=${query}`, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    window.open(`https://twitter.com/search?q=${query}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const openConnectionList = (title: string, users: User[], emptyLabel: string) => {
+    if (users.length === 0) {
+      showToast(isLoadingConnections ? 'Loading profile connections…' : emptyLabel, 'info');
+      return;
+    }
+    setUserListModal({
+      title,
+      users: users.map((connectionUser) => ({
+        id: connectionUser.id,
+        label: connectionUser.name,
+        lookupValue: connectionUser.id,
+        meta: connectionUser.affiliation,
+      })),
+    });
+  };
+
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950">
       <header className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-4 sticky top-0 bg-white dark:bg-slate-950 z-20">
@@ -4921,15 +6062,17 @@ function UserProfileScreen({ user, currentUserId, onBack, onPreprintClick, onTog
 
       <div className="flex-1 overflow-y-auto p-6 no-scrollbar">
         <div className="flex flex-col items-center text-center mb-8">
-          <img 
-            src={user.imageUrl} 
-            alt={user.name} 
-            className="size-32 rounded-full border-4 border-primary/10 object-cover mb-4"
-          />
+          <button type="button" onClick={() => setShowProfileImage(true)} className="mb-4 rounded-full transition-transform hover:scale-[1.02]" aria-label={`View ${user.name}'s profile photo`}>
+            <img 
+              src={user.imageUrl} 
+              alt={user.name} 
+              className="size-32 rounded-full border-4 border-primary/10 object-cover"
+            />
+          </button>
           <h1 className="text-2xl font-bold">{user.name}</h1>
           <p className="text-primary font-medium text-sm">{user.title || user.affiliation}</p>
           <button 
-            onClick={() => onInstitutionClick(user.institutionId || user.affiliation)}
+            onClick={() => void handleInstitutionAction()}
             className="text-primary font-medium text-sm hover:underline flex items-center gap-1"
           >
             {user.affiliation}
@@ -4957,6 +6100,13 @@ function UserProfileScreen({ user, currentUserId, onBack, onPreprintClick, onTog
             >
               Message
             </button>
+            <button
+              type="button"
+              onClick={() => void handleProfileShare()}
+              className="px-4 border border-slate-200 dark:border-slate-700 py-2.5 rounded-lg font-bold text-sm"
+            >
+              Share
+            </button>
           </div>
 
           {user.id !== currentUserId && (
@@ -4982,29 +6132,46 @@ function UserProfileScreen({ user, currentUserId, onBack, onPreprintClick, onTog
 
         <div className="flex gap-4 border-y border-slate-100 dark:border-slate-800 py-4 mb-8 overflow-x-auto no-scrollbar">
           <div className="flex-1 min-w-[60px] text-center">
-            <p className="text-xl font-bold">{user.stats.totalPublications || user.stats.preprints}</p>
+            <p className="text-xl font-bold">{publicationCount.toLocaleString()}</p>
             <p className="text-[10px] uppercase font-semibold text-slate-500">Pubs</p>
           </div>
           <div className="w-px bg-slate-200 dark:bg-slate-700"></div>
-          <div className="flex-1 min-w-[60px] text-center">
+          <button type="button" onClick={() => openConnectionList('Followers', followerUsers, 'This researcher does not have visible followers yet.')} className="flex-1 min-w-[60px] text-center">
             <p className="text-xl font-bold">{user.stats.followers || user.followers}</p>
             <p className="text-[10px] uppercase font-semibold text-slate-500">Followers</p>
-          </div>
+          </button>
           <div className="w-px bg-slate-200 dark:bg-slate-700"></div>
           <div className="flex-1 min-w-[60px] text-center">
-            <p className="text-xl font-bold">{user.stats.hIndex || 0}</p>
+            <p className="text-xl font-bold">{hIndex}</p>
             <p className="text-[10px] uppercase font-semibold text-slate-500">h-index</p>
           </div>
           <div className="w-px bg-slate-200 dark:bg-slate-700"></div>
           <div className="flex-1 min-w-[60px] text-center">
-            <p className="text-xl font-bold">{user.stats.i10Index || 0}</p>
+            <p className="text-xl font-bold">{i10Index}</p>
             <p className="text-[10px] uppercase font-semibold text-slate-500">i10-index</p>
           </div>
           <div className="w-px bg-slate-200 dark:bg-slate-700"></div>
-          <div className="flex-1 min-w-[60px] text-center">
-            <p className="text-xl font-bold">{(user.stats.citations / 1000).toFixed(1)}k</p>
+          <button type="button" onClick={() => setUserListModal({ title: 'Cited By', users: citationContacts })} className="flex-1 min-w-[60px] text-center">
+            <p className="text-xl font-bold">{formatCompactCount(citationCount)}</p>
             <p className="text-[10px] uppercase font-semibold text-slate-500">Cites</p>
-          </div>
+          </button>
+        </div>
+
+        <div className="mb-8 flex items-center justify-center gap-8 text-center">
+          <button
+            type="button"
+            onClick={() => openConnectionList('Following', followingUsers, 'This researcher is not following any visible profiles yet.')}
+            className="group"
+          >
+            <p className="text-lg font-bold transition-colors group-hover:text-primary">{user.following.toLocaleString()}</p>
+            <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400">Following</p>
+          </button>
+        </div>
+
+        <div className="mb-8 grid grid-cols-3 gap-3">
+          <SocialLink icon={<Quote />} label="ORCID" onClick={() => handleNetworkLink('orcid')} />
+          <SocialLink icon={<Linkedin />} label="LinkedIn" onClick={() => handleNetworkLink('linkedin')} />
+          <SocialLink icon={<Twitter />} label="Twitter" onClick={() => handleNetworkLink('twitter')} />
         </div>
 
         <div className="mb-8">
@@ -5017,7 +6184,7 @@ function UserProfileScreen({ user, currentUserId, onBack, onPreprintClick, onTog
         <div>
           <h3 className="text-xs font-bold uppercase text-slate-400 mb-4">Recent Publications</h3>
           <div className="space-y-4">
-            {userPreprints.map(p => {
+            {userPreprints.length > 0 ? userPreprints.map(p => {
               const isSaved = savedPreprints.some(sp => sp.id === p.id);
               return (
               <PreprintCard 
@@ -5030,10 +6197,52 @@ function UserProfileScreen({ user, currentUserId, onBack, onPreprintClick, onTog
                   showToast={showToast}
                 />
               );
-            })}
+            }) : (
+              <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500 dark:border-slate-800">
+                No linked publications are available for this researcher yet.
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {userListModal && (
+          <UserListModal
+            title={userListModal.title}
+            users={userListModal.users}
+            onUserSelect={(userLookup) => onAuthorClick(userLookup)}
+            onClose={() => setUserListModal(null)}
+            showToast={showToast}
+          />
+        )}
+        {showProfileImage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm"
+            onClick={() => setShowProfileImage(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              className="relative w-full max-w-lg"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => setShowProfileImage(false)}
+                className="absolute right-3 top-3 z-10 rounded-full bg-black/55 p-2 text-white"
+              >
+                <X className="size-5" />
+              </button>
+              <img src={user.imageUrl} alt={user.name} className="w-full rounded-3xl object-cover shadow-2xl" referrerPolicy="no-referrer" />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -5841,18 +7050,45 @@ function Input({ label, value }: { label: string, value: string }) {
   );
 }
 
-function NotificationsScreen({ settings, onOpenNotification, onBack, showToast, onRefreshNotifications }: { settings: UserSettings, onOpenNotification: (notification: Notification) => Promise<void>, onBack: () => void, showToast: (msg: string) => void, onRefreshNotifications: () => Promise<void> }) {
+function NotificationsScreen({ settings, activeTab, onChangeTab, onOpenNotification, onBack, showToast, onRefreshNotifications }: { settings: UserSettings, activeTab: 'all' | 'research' | 'network' | 'system', onChangeTab: (tab: 'all' | 'research' | 'network' | 'system') => void, onOpenNotification: (notification: Notification) => Promise<void>, onBack: () => void, showToast: (msg: string) => void, onRefreshNotifications: () => Promise<void> }) {
   const { dataset } = useAppData();
-  const [activeTab, setActiveTab] = useState<'all' | 'feeds' | 'activity'>('all');
 
   const visibleNotifications = dataset.notifications.filter((notification) => isNotificationVisible(notification, settings));
+  const researchNotifications = visibleNotifications.filter((notification) => getNotificationCategory(notification) === 'research');
+  const networkNotifications = visibleNotifications.filter((notification) => getNotificationCategory(notification) === 'network');
+  const systemNotifications = visibleNotifications.filter((notification) => getNotificationCategory(notification) === 'system');
 
   const filteredNotifications = visibleNotifications.filter(n => {
     if (activeTab === 'all') return true;
-    if (activeTab === 'feeds') return n.type === 'feed';
-    if (activeTab === 'activity') return n.type !== 'feed';
-    return true;
+    return getNotificationCategory(n) === activeTab;
   });
+
+  const sections = [
+    { key: 'research', title: 'Research Alerts', items: filteredNotifications.filter((notification) => getNotificationCategory(notification) === 'research') },
+    { key: 'network', title: 'Network & Messages', items: filteredNotifications.filter((notification) => getNotificationCategory(notification) === 'network') },
+    { key: 'system', title: 'System & Account', items: filteredNotifications.filter((notification) => getNotificationCategory(notification) === 'system') },
+  ].filter((section) => section.items.length > 0 || activeTab === section.key);
+
+  const unreadCounts = {
+    research: researchNotifications.filter((notification) => notification.isNew).length,
+    network: networkNotifications.filter((notification) => notification.isNew).length,
+    system: systemNotifications.filter((notification) => notification.isNew).length,
+  };
+
+  const emptyStateTitle = activeTab === 'all'
+    ? 'No visible notifications'
+    : activeTab === 'research'
+      ? 'No research alerts'
+      : activeTab === 'network'
+        ? 'No network or message alerts'
+        : 'No system notices';
+  const emptyStateDescription = activeTab === 'all'
+    ? 'Turn on publication, citation, or product updates in Settings to see more alerts here.'
+    : activeTab === 'research'
+      ? 'Feed and citation alerts will appear here when they are available.'
+      : activeTab === 'network'
+        ? 'Follows, paper shares, and direct messages will appear here when they arrive.'
+        : 'Product updates, moderation results, and account notices will appear here when relevant.';
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950">
@@ -5863,77 +7099,67 @@ function NotificationsScreen({ settings, onOpenNotification, onBack, showToast, 
         </div>
         <button 
           onClick={() => {
-            markNotificationsRead()
-              .then(onRefreshNotifications)
-              .then(() => showToast('All notifications marked as read'))
+            const handler = activeTab === 'all'
+              ? markNotificationsRead().then(onRefreshNotifications).then(() => showToast('All notifications marked as read'))
+              : Promise.all(filteredNotifications.filter((notification) => notification.isNew).map((notification) => markNotificationRead(notification.id)))
+                .then(onRefreshNotifications)
+                .then(() => showToast('Visible notifications marked as read'));
+            handler
               .catch((error) => showToast(error instanceof Error ? error.message : 'Unable to mark notifications as read'));
           }}
-          className="text-primary font-bold text-sm"
+          disabled={activeTab !== 'all' && !filteredNotifications.some((notification) => notification.isNew)}
+          className="text-primary font-bold text-sm disabled:opacity-50"
         >
-          Mark all
+          {activeTab === 'all' ? 'Mark all' : 'Mark visible'}
         </button>
       </header>
 
-      <div className="flex border-b border-slate-100 dark:border-slate-800">
+      <div className="grid grid-cols-4 border-b border-slate-100 dark:border-slate-800">
         <button 
-          onClick={() => setActiveTab('all')}
+          onClick={() => onChangeTab('all')}
           className={`flex-1 py-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'all' ? 'border-primary text-primary' : 'border-transparent text-slate-500'}`}
         >
           All
         </button>
         <button 
-          onClick={() => setActiveTab('feeds')}
-          className={`flex-1 py-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'feeds' ? 'border-primary text-primary' : 'border-transparent text-slate-500'}`}
+          onClick={() => onChangeTab('research')}
+          className={`flex-1 py-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'research' ? 'border-primary text-primary' : 'border-transparent text-slate-500'}`}
         >
-          Feeds
+          Research {unreadCounts.research > 0 ? `(${unreadCounts.research})` : ''}
         </button>
         <button 
-          onClick={() => setActiveTab('activity')}
-          className={`flex-1 py-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'activity' ? 'border-primary text-primary' : 'border-transparent text-slate-500'}`}
+          onClick={() => onChangeTab('network')}
+          className={`flex-1 py-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'network' ? 'border-primary text-primary' : 'border-transparent text-slate-500'}`}
         >
-          Activity
+          Network {unreadCounts.network > 0 ? `(${unreadCounts.network})` : ''}
+        </button>
+        <button 
+          onClick={() => onChangeTab('system')}
+          className={`flex-1 py-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'system' ? 'border-primary text-primary' : 'border-transparent text-slate-500'}`}
+        >
+          System {unreadCounts.system > 0 ? `(${unreadCounts.system})` : ''}
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-8 pb-20">
-        {activeTab !== 'activity' && filteredNotifications.some(n => n.type === 'feed') && (
-          <div>
-            <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-4">New Feed Results</h3>
+        {sections.map((section) => (
+          <div key={section.key}>
+            <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-4">{section.title}</h3>
             <div className="space-y-4">
-              {filteredNotifications.filter(n => n.type === 'feed').map(n => (
-                <NotificationItem key={n.id} notification={n} onClick={() => void onOpenNotification(n)} />
+              {section.items.map((notification) => (
+                <NotificationItem key={notification.id} notification={notification} onClick={() => void onOpenNotification(notification)} />
               ))}
             </div>
           </div>
-        )}
+        ))}
 
-        {activeTab !== 'feeds' && (filteredNotifications.some(n => n.type !== 'feed') || activeTab === 'activity') && (
-          <div>
-            <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-4">Recent Activity</h3>
-            <div className="space-y-4">
-              {filteredNotifications.filter(n => n.type !== 'feed').map(n => (
-                <NotificationItem key={n.id} notification={n} onClick={() => void onOpenNotification(n)} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {filteredNotifications.length === 0 && activeTab !== 'all' && (
+        {filteredNotifications.length === 0 && (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <div className="size-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400 mb-4">
               <BellOff className="size-8" />
             </div>
-            <h4 className="text-lg font-bold mb-1">No {activeTab} notifications</h4>
-            <p className="text-sm text-slate-500">We'll notify you when something new arrives.</p>
-          </div>
-        )}
-        {visibleNotifications.length === 0 && activeTab === 'all' && (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="size-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400 mb-4">
-              <BellOff className="size-8" />
-            </div>
-            <h4 className="text-lg font-bold mb-1">No alerts enabled</h4>
-            <p className="text-sm text-slate-500">Turn on publication or citation alerts in Settings to see new items here.</p>
+            <h4 className="text-lg font-bold mb-1">{emptyStateTitle}</h4>
+            <p className="text-sm text-slate-500">{emptyStateDescription}</p>
           </div>
         )}
       </div>
@@ -5942,12 +7168,17 @@ function NotificationsScreen({ settings, onOpenNotification, onBack, showToast, 
 }
 
 function NotificationItem({ notification, onClick }: { notification: Notification, onClick: () => void, key?: string | number }) {
+  const label = getNotificationLabel(notification);
   const getIcon = () => {
     switch (notification.type) {
       case 'feed': return <Rss className="size-6" />;
       case 'citation': return <Quote className="size-6" />;
       case 'collab': return <UserPlus className="size-6" />;
       case 'comment': return <MessageSquare className="size-6" />;
+      case 'product': return <Zap className="size-6" />;
+      case 'message': return <Send className="size-6" />;
+      case 'moderation': return <ShieldCheck className="size-6" />;
+      case 'account': return <Shield className="size-6" />;
       default: return <Bell className="size-6" />;
     }
   };
@@ -5958,6 +7189,10 @@ function NotificationItem({ notification, onClick }: { notification: Notificatio
       case 'citation': return 'bg-emerald-100 text-emerald-600';
       case 'collab': return 'bg-amber-100 text-amber-600';
       case 'comment': return 'bg-indigo-100 text-indigo-600';
+      case 'product': return 'bg-violet-100 text-violet-600';
+      case 'message': return 'bg-sky-100 text-sky-600';
+      case 'moderation': return 'bg-rose-100 text-rose-600';
+      case 'account': return 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200';
       default: return 'bg-slate-100 text-slate-600';
     }
   };
@@ -5972,6 +7207,11 @@ function NotificationItem({ notification, onClick }: { notification: Notificatio
           <h4 className="text-sm font-bold leading-tight">{notification.title}</h4>
           <span className="text-[10px] text-slate-400 font-medium">{notification.time}</span>
         </div>
+        <div className="mb-2">
+          <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+            {label}
+          </span>
+        </div>
         <p className="text-xs text-slate-500 leading-relaxed">{notification.description}</p>
       </div>
       <ChevronRight className="mt-1 size-4 shrink-0 text-slate-300" />
@@ -5979,20 +7219,28 @@ function NotificationItem({ notification, onClick }: { notification: Notificatio
   );
 }
 
-function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionClick, onSearch, showToast }: { 
+function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionClick, onInstitutionHomepageOpen, onSearch, showToast }: { 
   onTopicClick: () => void, 
   onAuthorClick: (id: string) => void,
   onTagClick: (tag: string) => void,
   onInstitutionClick: (id: string) => void,
+  onInstitutionHomepageOpen: (id: string) => void,
   onSearch: (query: string) => void,
   showToast: (msg: string) => void 
 }) {
   const { dataset } = useAppData();
   const [searchQuery, setSearchQuery] = useState('');
+  const [researcherSearchQuery, setResearcherSearchQuery] = useState('');
+  const [institutionSearchQuery, setInstitutionSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'global' | 'field'>('global');
   const [alertsEnabled, setAlertsEnabled] = useState(() => storageService.getTrendAlertsEnabled());
   const [showAllRisingStars, setShowAllRisingStars] = useState(false);
   const [volumeWindow, setVolumeWindow] = useState<'12m' | '6m'>('12m');
+  const researcherInputRef = useRef<HTMLInputElement | null>(null);
+  const parseTrendDate = (preprint: Preprint) => {
+    const parsed = new Date(preprint.publishedAt ?? preprint.date);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -6001,14 +7249,141 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
     }
   };
 
-  const filteredMetrics = dataset.trendMetrics.filter(m => 
-    m.label.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-  const displayedMetrics = activeTab === 'field' ? filteredMetrics.filter((metric) => metric.label.toLowerCase().includes('ai') || metric.label.toLowerCase().includes('citation') || metric.label.toLowerCase().includes('save')) : filteredMetrics;
+  const normalizedTrendQuery = searchQuery.trim().toLowerCase();
+  const totalCitations = dataset.preprints.reduce((sum, preprint) => sum + (preprint.citations || 0), 0);
+  const averageCitations = dataset.preprints.length > 0 ? totalCitations / dataset.preprints.length : 0;
+  const totalSaves = dataset.preprints.reduce((sum, preprint) => sum + (preprint.savesCount || 0), 0);
+  const averageSaves = dataset.preprints.length > 0 ? totalSaves / dataset.preprints.length : 0;
+  const sourceCount = new Set(dataset.preprints.map((preprint) => preprint.source)).size;
+  const globalMetrics = [
+    {
+      label: 'Tracked Papers',
+      value: dataset.preprints.length.toLocaleString(),
+      change: `${sourceCount} active sources`,
+      icon: 'FileText',
+      trend: 'up' as const,
+      targetTag: null,
+    },
+    {
+      label: 'Average Citations',
+      value: averageCitations.toFixed(1),
+      change: `${totalCitations.toLocaleString()} total cites`,
+      icon: 'Quote',
+      trend: 'up' as const,
+      targetTag: null,
+    },
+    {
+      label: 'Average Saves',
+      value: averageSaves.toFixed(1),
+      change: `${totalSaves.toLocaleString()} total saves`,
+      icon: 'TrendingUp',
+      trend: 'up' as const,
+      targetTag: null,
+    },
+  ].filter((metric) => !normalizedTrendQuery || metric.label.toLowerCase().includes(normalizedTrendQuery) || metric.change.toLowerCase().includes(normalizedTrendQuery));
+
+  const tagSummaries = (Object.entries(
+    dataset.preprints.reduce<Record<string, { count: number; citations: number }>>((accumulator, preprint) => {
+      preprint.tags.forEach((tag) => {
+        const current = accumulator[tag] ?? { count: 0, citations: 0 };
+        accumulator[tag] = {
+          count: current.count + 1,
+          citations: current.citations + (preprint.citations || 0),
+        };
+      });
+      return accumulator;
+    }, {}),
+  ) as Array<[string, { count: number; citations: number }]>)
+    .map(([tag, summary]) => ({
+      label: tag,
+      value: summary.count.toLocaleString(),
+      change: `${summary.citations.toLocaleString()} cites`,
+      icon: 'TrendingUp',
+      trend: 'up' as const,
+      targetTag: tag,
+      count: summary.count,
+    }))
+    .sort((left, right) => right.count - left.count);
+
+  const displayedMetrics = (activeTab === 'field' ? tagSummaries : globalMetrics)
+    .filter((metric) => !normalizedTrendQuery || metric.label.toLowerCase().includes(normalizedTrendQuery) || metric.change.toLowerCase().includes(normalizedTrendQuery))
+    .slice(0, activeTab === 'field' ? 6 : 3);
   const displayedRisingStars = showAllRisingStars ? dataset.risingStars : dataset.risingStars.slice(0, 3);
-  const publicationVolumeData = volumeWindow === '6m' ? dataset.publicationVolume.slice(-6) : dataset.publicationVolume;
+  const derivedPublicationVolumeData = (Object.values(
+    dataset.preprints.reduce<Record<string, { month: string; papers: number; timestamp: number }>>((accumulator, preprint) => {
+      const parsed = parseTrendDate(preprint);
+      if (!parsed) {
+        return accumulator;
+      }
+      const month = formatAbsoluteDate(parsed, { month: 'short', year: 'numeric' });
+      const key = `${parsed.getFullYear()}-${parsed.getMonth()}`;
+      const current = accumulator[key] ?? { month, papers: 0, timestamp: new Date(parsed.getFullYear(), parsed.getMonth(), 1).getTime() };
+      accumulator[key] = {
+        ...current,
+        papers: current.papers + 1,
+      };
+      return accumulator;
+    }, {}),
+  ) as Array<{ month: string; papers: number; timestamp: number }>)
+    .sort((left, right) => left.timestamp - right.timestamp)
+    .map(({ month, papers }) => ({ month, papers }));
+  const publicationVolumeSource = derivedPublicationVolumeData.length > 1 ? derivedPublicationVolumeData : dataset.publicationVolume;
+  const publicationVolumeData = volumeWindow === '6m' ? publicationVolumeSource.slice(-6) : publicationVolumeSource;
   const totalPublicationCount = publicationVolumeData.reduce((sum, point) => sum + point.papers, 0);
   const leadingInstitution = [...dataset.institutions].sort((left, right) => right.stats.citations - left.stats.citations)[0];
+  const topTopicLabels = tagSummaries.slice(0, 8).map((item) => item.label);
+  const displayedTopics = topTopicLabels.filter((topic) => !normalizedTrendQuery || topic.toLowerCase().includes(normalizedTrendQuery));
+  const primaryInterestLabel = topTopicLabels[0] ?? 'Primary Track';
+  const secondaryInterestLabel = topTopicLabels[1] ?? 'Secondary Track';
+  const derivedWeeklyInterestData = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => ({ day, primary: 0, secondary: 0 }));
+  dataset.preprints.forEach((preprint) => {
+    const parsed = parseTrendDate(preprint);
+    if (!parsed) {
+      return;
+    }
+    const dayIndex = (parsed.getDay() + 6) % 7;
+    const bucket = derivedWeeklyInterestData[dayIndex];
+    if (!bucket) {
+      return;
+    }
+    if (primaryInterestLabel !== 'Primary Track' && preprint.tags.includes(primaryInterestLabel)) {
+      bucket.primary += 1;
+    }
+    if (secondaryInterestLabel !== 'Secondary Track' && preprint.tags.includes(secondaryInterestLabel)) {
+      bucket.secondary += 1;
+    }
+  });
+  const hasDerivedWeeklyInterest = derivedWeeklyInterestData.some((point) => point.primary > 0 || point.secondary > 0);
+  const weeklyInterestData = hasDerivedWeeklyInterest
+    ? derivedWeeklyInterestData
+    : dataset.weeklyTrends.map((point) => ({ day: point.day, primary: point.quantum, secondary: point.ai }));
+  const weeklyInterestPrimaryLabel = hasDerivedWeeklyInterest ? primaryInterestLabel : 'Quantum';
+  const weeklyInterestSecondaryLabel = hasDerivedWeeklyInterest ? secondaryInterestLabel : 'AI';
+  const normalizedResearcherQuery = researcherSearchQuery.trim().toLowerCase();
+  const filteredResearchers = [...dataset.users]
+    .filter((user) => {
+      if (!normalizedResearcherQuery) {
+        return true;
+      }
+      return user.name.toLowerCase().includes(normalizedResearcherQuery)
+        || user.affiliation.toLowerCase().includes(normalizedResearcherQuery)
+        || user.bio.toLowerCase().includes(normalizedResearcherQuery)
+        || (user.title ?? '').toLowerCase().includes(normalizedResearcherQuery);
+    })
+    .sort((left, right) => right.stats.citations - left.stats.citations)
+    .slice(0, normalizedResearcherQuery ? 8 : 4);
+  const filteredInstitutions = [...dataset.institutions]
+    .filter((institution) => {
+      const normalizedQuery = institutionSearchQuery.trim().toLowerCase();
+      if (!normalizedQuery) {
+        return true;
+      }
+      return institution.name.toLowerCase().includes(normalizedQuery)
+        || institution.location.toLowerCase().includes(normalizedQuery)
+        || institution.description.toLowerCase().includes(normalizedQuery);
+    })
+    .sort((left, right) => right.stats.citations - left.stats.citations)
+    .slice(0, institutionSearchQuery.trim() ? 8 : 4);
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950">
@@ -6064,8 +7439,8 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
             displayedMetrics.map((metric, i) => (
               <div 
                 key={i} 
-                onClick={() => onTagClick(metric.label.split(' ')[0])}
-                className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm cursor-pointer hover:border-primary/30 transition-all group"
+                onClick={() => metric.targetTag && onTagClick(metric.targetTag)}
+                className={`bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm transition-all group ${metric.targetTag ? 'cursor-pointer hover:border-primary/30' : ''}`}
               >
                 <div className="flex items-center gap-2 text-primary mb-2 group-hover:scale-105 transition-transform">
                   {metric.icon === 'FileText' ? <Database className="size-4" /> : 
@@ -6134,7 +7509,7 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
             <button onClick={onTopicClick} className="text-[10px] font-bold text-primary uppercase tracking-wider">Insights</button>
           </div>
           <div className="flex flex-wrap gap-2">
-            {['Fault Tolerance', 'Qubit Coherence', 'Shor\'s Algorithm', 'Error Correction', 'Quantum Annealing', 'NISQ Era', 'Supremacy', 'Cryogenics'].map((topic, i) => (
+            {displayedTopics.map((topic, i) => (
               <button 
                 key={topic} 
                 onClick={() => onTagClick(topic)}
@@ -6147,6 +7522,11 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
                 {topic}
               </button>
             ))}
+            {displayedTopics.length === 0 && (
+              <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-6 text-sm text-slate-500 dark:border-slate-700">
+                No trending topics match that search yet.
+              </div>
+            )}
           </div>
         </div>
 
@@ -6159,26 +7539,26 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
           </div>
           <div className="h-48 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={dataset.weeklyTrends}>
+              <BarChart data={weeklyInterestData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700 }} />
                 <YAxis hide />
                 <Tooltip 
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '10px' }}
                 />
-                <Bar dataKey="quantum" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={12} />
-                <Bar dataKey="ai" fill="#10b981" radius={[4, 4, 0, 0]} barSize={12} />
+                <Bar dataKey="primary" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={12} />
+                <Bar dataKey="secondary" fill="#10b981" radius={[4, 4, 0, 0]} barSize={12} />
               </BarChart>
             </ResponsiveContainer>
           </div>
           <div className="flex justify-center gap-6 mt-4">
             <div className="flex items-center gap-2">
               <div className="size-2 rounded-full bg-blue-500"></div>
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Quantum</span>
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{weeklyInterestPrimaryLabel}</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="size-2 rounded-full bg-emerald-500"></div>
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">AI</span>
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{weeklyInterestSecondaryLabel}</span>
             </div>
           </div>
         </div>
@@ -6198,7 +7578,7 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
               <div 
                 key={star.id} 
                 className="flex items-center gap-4 cursor-pointer group"
-                onClick={() => onAuthorClick(star.name)}
+                onClick={() => onAuthorClick(dataset.users.find((user) => normalizePersonLabel(user.name) === normalizePersonLabel(star.name))?.id ?? star.name)}
               >
                 <img src={star.imageUrl} alt="" className="size-12 rounded-full object-cover border-2 border-primary/20 group-hover:border-primary transition-all" />
                 <div className="flex-1">
@@ -6226,7 +7606,8 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
           
           <div className="space-y-3">
             <button 
-              onClick={() => onSearch('')}
+              type="button"
+              onClick={() => researcherInputRef.current?.focus()}
               className="w-full bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-between group hover:border-primary/50 transition-all"
             >
               <div className="flex items-center gap-3">
@@ -6241,21 +7622,86 @@ function TrendsScreen({ onTopicClick, onAuthorClick, onTagClick, onInstitutionCl
               <ChevronRight className="size-5 text-slate-300 group-hover:text-primary transition-colors" />
             </button>
 
-            <button 
-              onClick={() => onInstitutionClick('uzh')}
-              className="w-full bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-between group hover:border-primary/50 transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="size-10 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center text-emerald-500">
-                  <Globe className="size-5" />
-                </div>
-                <div className="text-left">
-                  <p className="text-sm font-bold">Explore Institutions</p>
-                  <p className="text-[10px] text-slate-400 font-medium">Top universities and labs</p>
-                </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+              <div className="relative mb-4">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  ref={researcherInputRef}
+                  type="text"
+                  value={researcherSearchQuery}
+                  onChange={(event) => setResearcherSearchQuery(event.target.value)}
+                  placeholder="Search researchers by name, title, field, or institution"
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-slate-900"
+                />
               </div>
-              <ChevronRight className="size-5 text-slate-300 group-hover:text-primary transition-colors" />
-            </button>
+              <div className="space-y-3">
+                {filteredResearchers.length > 0 ? filteredResearchers.map((user) => (
+                  <button
+                    key={user.id}
+                    type="button"
+                    onClick={() => onAuthorClick(user.id)}
+                    className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 px-4 py-3 text-left transition-colors hover:border-primary/40 dark:border-slate-700"
+                  >
+                    <img src={user.imageUrl} alt={user.name} className="size-10 rounded-full object-cover" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold">{user.name}</p>
+                      <p className="truncate text-[10px] font-medium text-slate-400">{user.title ? `${user.title} • ` : ''}{user.affiliation}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs font-bold text-primary">{formatCompactCount(user.stats.citations)}</p>
+                      <p className="text-[8px] font-bold uppercase tracking-widest text-slate-400">Cites</p>
+                    </div>
+                  </button>
+                )) : (
+                  <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-700">
+                    No researchers match that search.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+              <div className="relative mb-4">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={institutionSearchQuery}
+                  onChange={(event) => setInstitutionSearchQuery(event.target.value)}
+                  placeholder="Search institutions by name or location"
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-slate-900"
+                />
+              </div>
+              <div className="space-y-3">
+                {filteredInstitutions.length > 0 ? filteredInstitutions.map((institution) => (
+                  <div key={institution.id} className="flex items-center gap-3 rounded-2xl border border-slate-200 px-4 py-3 dark:border-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => onInstitutionClick(institution.id)}
+                      className="flex flex-1 items-center gap-3 text-left"
+                    >
+                      <div className="size-10 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center text-emerald-500">
+                        <Globe className="size-5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold">{institution.name}</p>
+                        <p className="truncate text-[10px] font-medium text-slate-400">{institution.location}</p>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onInstitutionHomepageOpen(institution.id)}
+                      className="rounded-xl bg-primary/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-primary"
+                    >
+                      Homepage
+                    </button>
+                  </div>
+                )) : (
+                  <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-700">
+                    No institutions match that search.
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -6278,7 +7724,7 @@ function MetricCard({ label, value, change, icon }: { label: string, value: stri
   );
 }
 
-function DailyDigestScreen({ onBack, onOpenSettings, onOpenHelp, onOpenNotifications, onUnsubscribe, isSubscribed, showToast }: { onBack: () => void, onOpenSettings: () => void, onOpenHelp: () => void, onOpenNotifications: () => void, onUnsubscribe: () => Promise<void>, isSubscribed: boolean, showToast: (msg: string) => void }) {
+function DailyDigestScreen({ onBack, onOpenSettings, onOpenHelp, onOpenNotifications, onUnsubscribe, isSubscribed, emailEnabled, showToast }: { onBack: () => void, onOpenSettings: () => void, onOpenHelp: () => void, onOpenNotifications: () => void, onUnsubscribe: () => Promise<void>, isSubscribed: boolean, emailEnabled: boolean, showToast: (msg: string) => void }) {
   const { dataset } = useAppData();
   const digestTopics = [...new Set(dataset.digestPapers.map(paper => paper.topic))].slice(0, 2);
   const totalCitations = dataset.preprints.reduce((sum, preprint) => sum + (preprint.citations || 0), 0);
@@ -6325,6 +7771,11 @@ function DailyDigestScreen({ onBack, onOpenSettings, onOpenHelp, onOpenNotificat
       <div className="p-6 space-y-12 pb-24">
         <div>
           <h3 className="text-[10px] font-bold uppercase text-slate-400 tracking-[0.2em] mb-6">At a Glance</h3>
+          {!emailEnabled && (
+            <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+              Email delivery is currently off. You are viewing the in-app daily digest preview only.
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div 
               onClick={() => setSummaryFilter('matches')}
@@ -6434,10 +7885,12 @@ function DailyDigestScreen({ onBack, onOpenSettings, onOpenHelp, onOpenNotificat
           </div>
           <div className="space-y-4">
             <p className="text-[10px] text-slate-400 leading-relaxed max-w-[280px] mx-auto font-medium">
-              Sent to you because you're following these research areas.
+              {emailEnabled && isSubscribed
+                ? "This digest is scheduled for email delivery because you're following these research areas."
+                : 'This is an in-app preview of your daily digest content.'}
             </p>
             <div className="flex justify-center gap-6 text-[10px] font-bold uppercase tracking-widest">
-              <button type="button" onClick={onOpenSettings} className="text-primary hover:underline">Manage Digest Frequency</button>
+              <button type="button" onClick={onOpenSettings} className="text-primary hover:underline">{emailEnabled ? 'Manage Email Delivery' : 'Enable Email Delivery'}</button>
               <span className="text-slate-200">•</span>
               <button type="button" onClick={() => void handleUnsubscribe()} disabled={isUnsubscribing || !isSubscribed} className="text-slate-400 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50">
                 {isSubscribed ? (isUnsubscribing ? 'Updating…' : 'Unsubscribe') : 'Unsubscribed'}
@@ -6453,7 +7906,7 @@ function DailyDigestScreen({ onBack, onOpenSettings, onOpenHelp, onOpenNotificat
   );
 }
 
-function WeeklyDigestScreen({ onBack, onOpenLibrary, onOpenProfile, onOpenHome, onOpenSettings, onUnsubscribe, isSubscribed, showToast }: { onBack: () => void, onOpenLibrary: () => void, onOpenProfile: () => void, onOpenHome: () => void, onOpenSettings: () => void, onUnsubscribe: () => Promise<void>, isSubscribed: boolean, showToast: (msg: string) => void }) {
+function WeeklyDigestScreen({ onBack, onOpenLibrary, onOpenProfile, onOpenHome, onOpenSettings, onUnsubscribe, isSubscribed, emailEnabled, showToast }: { onBack: () => void, onOpenLibrary: () => void, onOpenProfile: () => void, onOpenHome: () => void, onOpenSettings: () => void, onUnsubscribe: () => Promise<void>, isSubscribed: boolean, emailEnabled: boolean, showToast: (msg: string) => void }) {
   const { dataset } = useAppData();
   const totalMatches = dataset.preprints.length;
   const totalCitations = dataset.preprints.reduce((sum, preprint) => sum + (preprint.citations || 0), 0);
@@ -6532,6 +7985,12 @@ function WeeklyDigestScreen({ onBack, onOpenLibrary, onOpenProfile, onOpenHome, 
             We've synthesized the latest breakthroughs and your personal engagement metrics for the past 7 days.
           </p>
         </div>
+
+        {!emailEnabled && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+            Email delivery is currently off. You are viewing the in-app weekly digest preview only.
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4">
           <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
@@ -6668,10 +8127,12 @@ function WeeklyDigestScreen({ onBack, onOpenLibrary, onOpenProfile, onOpenHome, 
           </div>
           <div className="space-y-4">
             <p className="text-[10px] text-slate-400 leading-relaxed max-w-[280px] mx-auto font-medium">
-              You're receiving this because you're subscribed to Weekly Digest.
+              {emailEnabled && isSubscribed
+                ? "You're scheduled to receive this weekly digest by email."
+                : 'This is an in-app preview of your weekly digest content.'}
             </p>
             <div className="flex justify-center gap-6 text-[10px] font-bold uppercase tracking-widest">
-              <button type="button" onClick={onOpenSettings} className="text-slate-500 hover:underline">Manage Preferences</button>
+              <button type="button" onClick={onOpenSettings} className="text-slate-500 hover:underline">{emailEnabled ? 'Manage Email Preferences' : 'Enable Email Delivery'}</button>
               <span className="text-slate-200">•</span>
               <button type="button" onClick={() => void handleUnsubscribe()} disabled={isUnsubscribing || !isSubscribed} className="text-slate-500 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50">
                 {isSubscribed ? (isUnsubscribing ? 'Updating…' : 'Unsubscribe') : 'Unsubscribed'}
@@ -6915,21 +8376,22 @@ function TopicInsightScreen({ onBack, onPreprintClick, onTagClick, onAuthorClick
   );
 }
 
-function ShareScreen({ collection, currentUser, onBack, showToast }: { collection: Collection, currentUser: User, onBack: () => void, showToast: (msg: string) => void }) {
+function ShareScreen({ collection, currentUser, onBack, onOpenMenu, showToast }: { collection: Collection, currentUser: User, onBack: () => void, onOpenMenu: () => void, showToast: (msg: string) => void }) {
   const { dataset, setDataset } = useAppData();
   const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<'viewer' | 'editor'>('editor');
   const collectionRecord = dataset.collections.find((item) => item.id === collection.id) ?? collection;
-  const accessList = collectionRecord.sharedWith ?? [];
+  const owner = dataset.users.find((item) => item.id === collectionRecord.ownerId);
+  const accessRole = getCollectionAccessRole(collectionRecord, currentUser);
+  const accessList = getCollectionCollaborators(collectionRecord)
+    .filter((entry) => entry.email !== currentUser.email?.toLowerCase());
+  const canManageAccess = accessRole === 'owner';
 
-  const updateCollectionAccess = (sharedWith: string[]) => {
+  const updateCollectionAccess = async (collaborators: Array<{ email: string; role: 'viewer' | 'editor' }>) => {
+    const response = await updateCollectionAccessRequest(collectionRecord.id, collaborators);
     setDataset((prev) => ({
       ...prev,
-      collections: prev.collections.map((item) => item.id === collectionRecord.id ? {
-        ...item,
-        sharedWith,
-        shareLinkToken: item.shareLinkToken || item.id,
-        updatedAt: 'Just now',
-      } : item),
+      collections: response.collections,
       metadata: {
         ...prev.metadata,
         lastUpdated: new Date().toISOString(),
@@ -6938,18 +8400,28 @@ function ShareScreen({ collection, currentUser, onBack, showToast }: { collectio
   };
 
   const handleInvite = () => {
+    if (!canManageAccess) {
+      showToast('Only the collection owner can manage access');
+      return;
+    }
     const normalized = inviteEmail.trim().toLowerCase();
     if (!normalized || !normalized.includes('@')) {
       showToast('Enter a valid email address');
       return;
     }
-    if (accessList.includes(normalized)) {
+    if (accessList.some((entry) => entry.email === normalized)) {
       showToast('This collaborator already has access');
       return;
     }
-    updateCollectionAccess([...accessList, normalized]);
-    setInviteEmail('');
-    showToast('Invitation added to the access list');
+    void updateCollectionAccess([...accessList, { email: normalized, role: inviteRole }])
+      .then(() => {
+        setInviteEmail('');
+        setInviteRole('editor');
+        showToast('Invitation added to the access list');
+      })
+      .catch((error) => {
+        showToast(error instanceof Error ? error.message : 'Unable to update collection access');
+      });
   };
 
   const handleCopyLink = async () => {
@@ -6962,9 +8434,24 @@ function ShareScreen({ collection, currentUser, onBack, showToast }: { collectio
     }
   };
 
+  const handleUpdateRole = (email: string, role: 'viewer' | 'editor') => {
+    if (!canManageAccess) {
+      showToast('Only the collection owner can manage access');
+      return;
+    }
+    void updateCollectionAccess(accessList.map((entry) => entry.email === email ? { ...entry, role } : entry))
+      .then(() => showToast(`Updated ${email} to ${role}`))
+      .catch((error) => showToast(error instanceof Error ? error.message : 'Unable to update collection access'));
+  };
+
   const handleRemoveAccess = (email: string) => {
-    updateCollectionAccess(accessList.filter((item) => item !== email));
-    showToast(`Removed ${email}`);
+    if (!canManageAccess) {
+      showToast('Only the collection owner can manage access');
+      return;
+    }
+    void updateCollectionAccess(accessList.filter((item) => item.email !== email))
+      .then(() => showToast(`Removed ${email}`))
+      .catch((error) => showToast(error instanceof Error ? error.message : 'Unable to update collection access'));
   };
 
   return (
@@ -6977,9 +8464,24 @@ function ShareScreen({ collection, currentUser, onBack, showToast }: { collectio
             <p className="text-xs text-slate-500">{collectionRecord.name}</p>
           </div>
         </div>
-        <button onClick={onBack} className="text-primary font-bold">Done</button>
+        <div className="flex items-center gap-4">
+          <Menu className="text-primary cursor-pointer" onClick={onOpenMenu} />
+          <button onClick={onBack} className="text-primary font-bold">Done</button>
+        </div>
       </header>
       <div className="p-4 space-y-6">
+        <section className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-800/50">
+          <p className="font-bold text-slate-900 dark:text-slate-100">
+            {accessRole === 'owner' ? 'You own this collection' : `Your access: ${accessRole}`}
+          </p>
+          <p className="mt-2 text-slate-500">
+            {accessRole === 'owner'
+              ? 'Invite collaborators, change their roles, and share a direct collection link.'
+              : accessRole === 'editor'
+                ? 'You can view the access list, copy the collection link, and manage papers inside the collection.'
+                : 'You can view the collection and copy the link, but only the owner can change access.'}
+          </p>
+        </section>
         <section>
           <h3 className="font-bold mb-4">Invite collaborators</h3>
           <div className="flex gap-2">
@@ -6988,11 +8490,22 @@ function ShareScreen({ collection, currentUser, onBack, showToast }: { collectio
               value={inviteEmail}
               onChange={(event) => setInviteEmail(event.target.value)}
               placeholder="Enter email address"
-              className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 text-sm"
+              disabled={!canManageAccess}
+              className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 text-sm disabled:opacity-50"
             />
+            <select
+              value={inviteRole}
+              onChange={(event) => setInviteRole(event.target.value as 'viewer' | 'editor')}
+              disabled={!canManageAccess}
+              className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 text-sm disabled:opacity-50"
+            >
+              <option value="editor">Editor</option>
+              <option value="viewer">Viewer</option>
+            </select>
             <button 
               onClick={handleInvite}
-              className="bg-primary text-white px-6 rounded-lg font-bold text-sm"
+              disabled={!canManageAccess}
+              className="bg-primary text-white px-6 rounded-lg font-bold text-sm disabled:opacity-50"
             >
               Invite
             </button>
@@ -7018,28 +8531,53 @@ function ShareScreen({ collection, currentUser, onBack, showToast }: { collectio
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <img src={currentUser.imageUrl} className="size-10 rounded-full object-cover" alt={currentUser.name} referrerPolicy="no-referrer" />
+                <img src={(owner ?? currentUser).imageUrl} className="size-10 rounded-full object-cover" alt={(owner ?? currentUser).name} referrerPolicy="no-referrer" />
                 <div>
-                  <p className="text-sm font-bold">{currentUser.name} (You)</p>
-                  <p className="text-xs text-slate-500">{currentUser.email || `${currentUser.id}@preprint-explorer.local`}</p>
+                  <p className="text-sm font-bold">{owner?.name ?? `${currentUser.name} (You)`}</p>
+                  <p className="text-xs text-slate-500">{owner?.email || currentUser.email || `${currentUser.id}@preprint-explorer.local`}</p>
                 </div>
               </div>
               <span className="text-xs font-bold text-slate-400 uppercase">Owner</span>
             </div>
-            {accessList.map((email) => (
-              <div key={email} className="flex items-center justify-between">
+            {accessRole !== 'owner' && currentUser.email && (
+              <div className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-3 dark:border-slate-800">
+                <div>
+                  <p className="text-sm font-bold">{currentUser.email}</p>
+                  <p className="text-xs text-slate-500">Your access on this collection</p>
+                </div>
+                <span className="text-xs font-bold uppercase text-primary">{accessRole}</span>
+              </div>
+            )}
+            {accessList.map((entry) => (
+              <div key={entry.email} className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="size-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
-                    {email.slice(0, 2).toUpperCase()}
+                    {entry.email.slice(0, 2).toUpperCase()}
                   </div>
                   <div>
-                    <p className="text-sm font-bold">{email}</p>
+                    <p className="text-sm font-bold">{entry.email}</p>
                     <p className="text-xs text-slate-500">Invited collaborator</p>
                   </div>
                 </div>
-                <button onClick={() => handleRemoveAccess(email)} className="text-xs font-bold text-rose-500">
-                  Remove
-                </button>
+                <div className="flex items-center gap-2">
+                  {canManageAccess ? (
+                    <select
+                      value={entry.role}
+                      onChange={(event) => handleUpdateRole(entry.email, event.target.value as 'viewer' | 'editor')}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold uppercase dark:border-slate-700 dark:bg-slate-900"
+                    >
+                      <option value="editor">Editor</option>
+                      <option value="viewer">Viewer</option>
+                    </select>
+                  ) : (
+                    <span className="text-xs font-bold uppercase text-slate-400">{entry.role}</span>
+                  )}
+                  {canManageAccess && (
+                    <button onClick={() => handleRemoveAccess(entry.email)} className="text-xs font-bold text-rose-500">
+                      Remove
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
             {accessList.length === 0 && (
@@ -7058,17 +8596,24 @@ function ModerationCenterScreen({
   reports,
   moderators,
   reportActions,
+  productAnnouncements,
+  initialReportId,
+  onConsumeInitialReport,
   onBack,
   onOpenReport,
   onAssignReport,
   onEscalateReport,
   onBulkAction,
   onReviewReport,
+  onPublishProductAnnouncement,
   showToast,
 }: {
   reports: ModerationReport[];
   moderators: Array<Pick<User, 'id' | 'name'>>;
   reportActions: Record<string, ModerationAction[]>;
+  productAnnouncements: ProductAnnouncement[];
+  initialReportId?: string | null;
+  onConsumeInitialReport?: () => void;
   onBack: () => void;
   onOpenReport: (reportId: string) => Promise<{ report: ModerationReport; actions: ModerationAction[] }>;
   onAssignReport: (reportId: string, assignedToUserId: string | null) => Promise<void>;
@@ -7082,6 +8627,7 @@ function ModerationCenterScreen({
     escalationReason?: string;
   }) => Promise<void>;
   onReviewReport: (reportId: string, payload: { status: 'reviewing' | 'resolved' | 'dismissed'; resolutionNote?: string }) => Promise<void>;
+  onPublishProductAnnouncement: (payload: { title: string; message: string; actionUrl?: string }) => Promise<ProductAnnouncement>;
   showToast: (msg: string, type?: 'success' | 'info') => void;
 }) {
   const [activeFilter, setActiveFilter] = useState<'all' | 'open' | 'reviewing' | 'resolved' | 'dismissed'>('all');
@@ -7094,13 +8640,16 @@ function ModerationCenterScreen({
   const [bulkMode, setBulkMode] = useState<'off' | 'assign' | 'review' | 'escalate'>('off');
   const [nextStatus, setNextStatus] = useState<'reviewing' | 'resolved' | 'dismissed'>('reviewing');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [announcementTitle, setAnnouncementTitle] = useState('');
+  const [announcementMessage, setAnnouncementMessage] = useState('');
+  const [announcementActionUrl, setAnnouncementActionUrl] = useState('/notifications/system');
 
   const filteredReports = reports.filter((report) => activeFilter === 'all' || report.status === activeFilter);
   const openCount = reports.filter((report) => report.status === 'open').length;
 
-  const openReviewModal = async (report: ModerationReport) => {
+  const loadReportDetail = async (reportId: string) => {
     try {
-      const detail = await onOpenReport(report.id);
+      const detail = await onOpenReport(reportId);
       setSelectedReport(detail.report);
       setSelectedReportActions(detail.actions);
       setResolutionNote(detail.report.resolutionNote ?? '');
@@ -7111,6 +8660,43 @@ function ModerationCenterScreen({
       showToast(error instanceof Error ? error.message : 'Unable to load report details', 'info');
     }
   };
+
+  const openReviewModal = async (report: ModerationReport) => {
+    await loadReportDetail(report.id);
+  };
+
+  useEffect(() => {
+    if (!initialReportId) {
+      return;
+    }
+    let cancelled = false;
+    const openInitialReport = async () => {
+      try {
+        const detail = await onOpenReport(initialReportId);
+        if (cancelled) {
+          return;
+        }
+        setSelectedReport(detail.report);
+        setSelectedReportActions(detail.actions);
+        setResolutionNote(detail.report.resolutionNote ?? '');
+        setAssignedToUserId(detail.report.assignedToUserId ?? '');
+        setEscalationReason(detail.report.escalationReason ?? '');
+        setNextStatus(detail.report.status === 'open' ? 'reviewing' : detail.report.status === 'reviewing' ? 'resolved' : 'dismissed');
+      } catch (error) {
+        if (!cancelled) {
+          showToast(error instanceof Error ? error.message : 'Unable to load report details', 'info');
+        }
+      } finally {
+        if (!cancelled) {
+          onConsumeInitialReport?.();
+        }
+      }
+    };
+    void openInitialReport();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialReportId, onConsumeInitialReport, onOpenReport, showToast]);
 
   const handleSubmit = async () => {
     if (!selectedReport) {
@@ -7165,6 +8751,29 @@ function ModerationCenterScreen({
       setAssignedToUserId('');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Unable to apply bulk moderation action', 'info');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handlePublishAnnouncement = async () => {
+    if (!announcementTitle.trim() || !announcementMessage.trim()) {
+      showToast('Title and message are required for a product update.', 'info');
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      await onPublishProductAnnouncement({
+        title: announcementTitle.trim(),
+        message: announcementMessage.trim(),
+        actionUrl: announcementActionUrl.trim() || '/notifications/system',
+      });
+      setAnnouncementTitle('');
+      setAnnouncementMessage('');
+      setAnnouncementActionUrl('/notifications/system');
+      showToast('Product update published');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to publish product update', 'info');
     } finally {
       setIsSubmitting(false);
     }
@@ -7229,6 +8838,62 @@ function ModerationCenterScreen({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar">
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Product Updates</p>
+              <h3 className="mt-1 text-base font-bold">Publish an announcement</h3>
+            </div>
+            <span className="rounded-full bg-violet-100 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
+              {productAnnouncements.length} published
+            </span>
+          </div>
+          <div className="mt-4 space-y-3">
+            <input
+              value={announcementTitle}
+              onChange={(event) => setAnnouncementTitle(event.target.value)}
+              placeholder="Release title"
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-slate-950"
+            />
+            <textarea
+              value={announcementMessage}
+              onChange={(event) => setAnnouncementMessage(event.target.value)}
+              placeholder="What changed and why users should care."
+              className="min-h-[120px] w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-slate-950"
+            />
+            <input
+              value={announcementActionUrl}
+              onChange={(event) => setAnnouncementActionUrl(event.target.value)}
+              placeholder="/notification-settings"
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-slate-950"
+            />
+            <button
+              type="button"
+              onClick={() => void handlePublishAnnouncement()}
+              disabled={isSubmitting}
+              className="rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 disabled:opacity-60"
+            >
+              {isSubmitting ? 'Publishing…' : 'Publish Product Update'}
+            </button>
+          </div>
+          {productAnnouncements.length > 0 && (
+            <div className="mt-4 space-y-3">
+              {productAnnouncements.slice(0, 3).map((announcement) => (
+                <div key={announcement.id} className="rounded-2xl bg-slate-50 p-4 text-sm dark:bg-slate-950">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="font-bold text-slate-900 dark:text-slate-100">{announcement.title}</p>
+                      <p className="mt-1 text-slate-600 dark:text-slate-300">{announcement.message}</p>
+                    </div>
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{new Date(announcement.createdAt).toLocaleString()}</span>
+                  </div>
+                  <p className="mt-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Published by {announcement.createdByName}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {filteredReports.length === 0 ? (
           <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">
             <ShieldCheck className="mx-auto mb-3 size-10 text-emerald-500" />
@@ -7385,26 +9050,62 @@ function ModerationCenterScreen({
   );
 }
 
-function SettingsScreen({ settings, canModerate, onUpdateSetting, onBack, onOpenMenu, onNavigate, onLegal, showToast, onSignOut }: { settings: UserSettings, canModerate: boolean, onUpdateSetting: (key: keyof UserSettings, value: boolean | string) => Promise<UserSettings>, onBack: () => void, onOpenMenu: () => void, onNavigate: (s: Screen) => void, onLegal: (type: 'tos' | 'privacy') => void, showToast: (msg: string) => void, onSignOut: () => void }) {
-  const [activeTab, setActiveTab] = useState<'notifications' | 'security' | 'data'>('notifications');
+function SettingsScreen({ initialTab, settings, currentUser, securitySummary, trustedDevicesCount, securityAlertsCount, canModerate, onUpdateSetting, onBack, onOpenMenu, onNavigate, onLegal, showToast, onSignOut }: { initialTab: 'notifications' | 'security' | 'data', settings: UserSettings, currentUser: User, securitySummary: SecuritySummary | null, trustedDevicesCount: number, securityAlertsCount: number, canModerate: boolean, onUpdateSetting: (key: keyof UserSettings, value: boolean | string) => Promise<UserSettings>, onBack: () => void, onOpenMenu: () => void, onNavigate: (s: Screen) => void, onLegal: (type: 'tos' | 'privacy') => void, showToast: (msg: string) => void, onSignOut: () => void }) {
+  const [activeTab, setActiveTab] = useState<'notifications' | 'security' | 'data'>(initialTab);
   const [isUpdatingDay, setIsUpdatingDay] = useState(false);
+  const [sendingDigestKind, setSendingDigestKind] = useState<'daily' | 'weekly' | null>(null);
+  const deliveryDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
   const toggleSetting = async (key: keyof UserSettings) => {
+    if ((key === 'dailyDigest' || key === 'weeklyDigest') && !settings.emailEnabled) {
+      showToast('Enable email notifications to manage digest delivery.');
+      return;
+    }
     const nextValue = !settings[key] as boolean;
+    if (key === 'emailEnabled' && !nextValue) {
+      await onUpdateSetting('emailEnabled', false);
+      if (settings.dailyDigest) {
+        await onUpdateSetting('dailyDigest', false);
+      }
+      if (settings.weeklyDigest) {
+        await onUpdateSetting('weeklyDigest', false);
+      }
+      showToast('Email notifications and digest delivery disabled');
+      return;
+    }
     await onUpdateSetting(key, nextValue);
     const settingName = String(key).replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
     showToast(`${settingName} ${nextValue ? 'enabled' : 'disabled'}`);
   };
 
-  const cycleDeliveryDay = async () => {
-    const deliveryDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    const currentIndex = deliveryDays.indexOf(settings.deliveryDay);
-    const nextDay = deliveryDays[(currentIndex + 1) % deliveryDays.length];
+  const handleDeliveryDayChange = async (nextDay: string) => {
     try {
       setIsUpdatingDay(true);
       await onUpdateSetting('deliveryDay', nextDay);
       showToast(`Weekly digest day set to ${nextDay}`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to update weekly digest day');
     } finally {
       setIsUpdatingDay(false);
+    }
+  };
+
+  const handleSendDigestNow = async (kind: 'daily' | 'weekly') => {
+    try {
+      setSendingDigestKind(kind);
+      const result = await sendDigestNow(kind);
+      if (result.delivery.delivered) {
+        showToast(`${kind === 'daily' ? 'Daily' : 'Weekly'} digest sent to ${result.recipient}`);
+      } else {
+        showToast(`${kind === 'daily' ? 'Daily' : 'Weekly'} digest prepared in debug mode. Configure SMTP_URL for inbox delivery.`);
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to send digest email');
+    } finally {
+      setSendingDigestKind(null);
     }
   };
 
@@ -7451,13 +9152,13 @@ function SettingsScreen({ settings, canModerate, onUpdateSetting, onBack, onOpen
               <div className="bg-white dark:bg-slate-900 border-y border-slate-200 dark:border-slate-800">
                 <SettingItem 
                   title="Push Notifications"
-                  description="Receive real-time alerts on your device"
+                  description="Controls in-app and push-style alert banners for new activity."
                   active={settings.pushEnabled}
                   onToggle={() => toggleSetting('pushEnabled')}
                 />
                 <SettingItem 
                   title="Email Notifications"
-                  description="Receive updates in your inbox"
+                  description="Controls email delivery, including daily and weekly digests."
                   active={settings.emailEnabled}
                   onToggle={() => toggleSetting('emailEnabled')}
                   showDivider={false}
@@ -7475,41 +9176,83 @@ function SettingsScreen({ settings, canModerate, onUpdateSetting, onBack, onOpen
                   description="A summary of research updates delivered every morning"
                   active={settings.dailyDigest}
                   onToggle={() => toggleSetting('dailyDigest')}
+                  disabled={!settings.emailEnabled}
                 />
-                <div className="px-4 py-3 bg-slate-50 dark:bg-slate-800/50 flex justify-between items-center">
-                  <span className="text-xs font-bold text-slate-500">Preview Daily Digest</span>
-                  <button 
-                    onClick={() => onNavigate('daily-digest')}
-                    className="text-[10px] font-bold text-primary uppercase tracking-widest bg-white dark:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 shadow-sm"
-                  >
-                    View Now
-                  </button>
+                <div className="px-4 py-3 bg-slate-50 dark:bg-slate-800/50">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <span className="text-xs font-bold text-slate-500">Preview Daily Digest in-app</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button 
+                        onClick={() => void handleSendDigestNow('daily')}
+                        disabled={!settings.emailEnabled || sendingDigestKind === 'daily'}
+                        className="text-[10px] font-bold text-slate-600 uppercase tracking-widest bg-white dark:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 shadow-sm disabled:opacity-50"
+                      >
+                        {sendingDigestKind === 'daily' ? 'Sending…' : 'Send Test Email'}
+                      </button>
+                      <button 
+                        onClick={() => onNavigate('daily-digest')}
+                        className="text-[10px] font-bold text-primary uppercase tracking-widest bg-white dark:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 shadow-sm"
+                      >
+                        Open Preview
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 <SettingItem 
                   title="Weekly Digest"
                   description="The most important research insights from the past week"
                   active={settings.weeklyDigest}
                   onToggle={() => toggleSetting('weeklyDigest')}
+                  disabled={!settings.emailEnabled}
                   showDivider={false}
                 />
-                <div className="px-4 py-3 bg-slate-50 dark:bg-slate-800/50 flex justify-between items-center">
-                  <span className="text-xs font-bold text-slate-500">Preview Weekly Digest</span>
-                  <button 
-                    onClick={() => onNavigate('weekly-digest')}
-                    className="text-[10px] font-bold text-primary uppercase tracking-widest bg-white dark:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 shadow-sm"
-                  >
-                    View Now
-                  </button>
+                <div className="px-4 py-3 bg-slate-50 dark:bg-slate-800/50">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <span className="text-xs font-bold text-slate-500">Preview Weekly Digest in-app</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button 
+                        onClick={() => void handleSendDigestNow('weekly')}
+                        disabled={!settings.emailEnabled || sendingDigestKind === 'weekly'}
+                        className="text-[10px] font-bold text-slate-600 uppercase tracking-widest bg-white dark:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 shadow-sm disabled:opacity-50"
+                      >
+                        {sendingDigestKind === 'weekly' ? 'Sending…' : 'Send Test Email'}
+                      </button>
+                      <button 
+                        onClick={() => onNavigate('weekly-digest')}
+                        className="text-[10px] font-bold text-primary uppercase tracking-widest bg-white dark:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 shadow-sm"
+                      >
+                        Open Preview
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 {settings.weeklyDigest && (
                   <div className="px-4 pb-4">
-                    <button type="button" onClick={() => void cycleDeliveryDay()} disabled={isUpdatingDay} className="w-full bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4 flex items-center justify-between disabled:opacity-60">
-                      <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Delivery day</span>
-                      <div className="flex items-center gap-2 text-primary font-bold text-sm">
-                        {isUpdatingDay ? 'Updating…' : settings.deliveryDay}
-                        <ChevronRight className="size-4 rotate-90" />
+                    <div className="w-full rounded-xl bg-slate-50 dark:bg-slate-800/50 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Weekly delivery day</span>
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={settings.deliveryDay}
+                            onChange={(event) => void handleDeliveryDayChange(event.target.value)}
+                            disabled={isUpdatingDay || !settings.emailEnabled}
+                            className="min-w-[160px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700"
+                          >
+                            {deliveryDays.map((day) => (
+                              <option key={day} value={day}>{day}</option>
+                            ))}
+                          </select>
+                          {isUpdatingDay && <LoaderCircle className="size-4 animate-spin text-primary" />}
+                        </div>
                       </div>
-                    </button>
+                    </div>
+                  </div>
+                )}
+                {!settings.emailEnabled && (
+                  <div className="px-4 pb-4">
+                    <p className="rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                      Turn email notifications back on to receive daily and weekly digests.
+                    </p>
                   </div>
                 )}
               </div>
@@ -7559,6 +9302,60 @@ function SettingsScreen({ settings, canModerate, onUpdateSetting, onBack, onOpen
           </>
         ) : activeTab === 'security' ? (
           <>
+            {securitySummary && (
+              <section className="mb-6">
+                <div className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                  Security Overview
+                </div>
+                <div className="mx-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3 dark:bg-slate-800/60">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Email</p>
+                      <p className="mt-2 font-bold text-slate-900 dark:text-slate-100">{securitySummary.isEmailVerified ? 'Verified' : 'Unverified'}</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3 dark:bg-slate-800/60">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Two-Factor</p>
+                      <p className="mt-2 font-bold text-slate-900 dark:text-slate-100">{securitySummary.hasTwoFactorEnabled ? 'Enabled' : 'Disabled'}</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3 dark:bg-slate-800/60">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Passkeys</p>
+                      <p className="mt-2 font-bold text-slate-900 dark:text-slate-100">{securitySummary.passkeyCount}</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3 dark:bg-slate-800/60">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Backup Codes</p>
+                      <p className="mt-2 font-bold text-slate-900 dark:text-slate-100">{securitySummary.hasTwoFactorEnabled ? securitySummary.backupCodesRemaining : 0} remaining</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {!securitySummary.isEmailVerified && currentUser.email && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void requestEmailVerification()
+                            .then((response) => showToast(response.debugToken ? 'Verification token generated for local development' : response.message))
+                            .catch((error) => showToast(error instanceof Error ? error.message : 'Unable to request email verification'));
+                        }}
+                        className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-bold text-primary"
+                      >
+                        Send Verification Email
+                      </button>
+                    )}
+                    {securitySummary.hasTwoFactorEnabled && (
+                      <button type="button" onClick={() => onNavigate('2fa-backup')} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                        Manage Backup Codes
+                      </button>
+                    )}
+                    <button type="button" onClick={() => onNavigate('passkeys')} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                      Manage Passkeys
+                    </button>
+                  </div>
+                  <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
+                    Sensitive changes like removing your last passkey, disabling 2FA, or changing account recovery details may ask for recent authentication again even if you are already signed in.
+                  </p>
+                </div>
+              </section>
+            )}
+
             <section className="mb-6">
               <div className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">
                 Account Security
@@ -7573,13 +9370,21 @@ function SettingsScreen({ settings, canModerate, onUpdateSetting, onBack, onOpen
                 <SecurityOption 
                   icon={<Shield className="size-5" />}
                   title="Two-Factor Authentication"
-                  description="Add an extra layer of security to your account"
+                  description={currentUser.hasTwoFactorEnabled ? 'Enabled for sign-in protection on this account' : 'Add an extra layer of security to your account'}
                   onClick={() => onNavigate('2fa-setup')}
                 />
+                {currentUser.hasTwoFactorEnabled && (
+                  <SecurityOption
+                    icon={<FileText className="size-5" />}
+                    title="Backup Codes"
+                    description={securitySummary ? `${securitySummary.backupCodesRemaining} recovery codes remaining` : 'Review or regenerate your recovery codes'}
+                    onClick={() => onNavigate('2fa-backup')}
+                  />
+                )}
                 <SecurityOption 
                   icon={<Key className="size-5" />}
                   title="Passkeys"
-                  description="Register biometric or hardware-backed sign-in credentials"
+                  description={securitySummary ? `${securitySummary.passkeyCount} registered credential${securitySummary.passkeyCount === 1 ? '' : 's'}` : 'Register biometric or hardware-backed sign-in credentials'}
                   onClick={() => onNavigate('passkeys')}
                 />
                 <SecurityOption 
@@ -7591,13 +9396,13 @@ function SettingsScreen({ settings, canModerate, onUpdateSetting, onBack, onOpen
                 <SecurityOption 
                   icon={<Smartphone className="size-5" />}
                   title="Trusted Devices"
-                  description="Manage devices that can access your account"
+                  description={trustedDevicesCount > 0 ? `${trustedDevicesCount} remembered device${trustedDevicesCount === 1 ? '' : 's'} or active sessions` : 'Manage devices that can access your account'}
                   onClick={() => onNavigate('trusted-devices')}
                 />
                 <SecurityOption 
                   icon={<History className="size-5" />}
                   title="Recent Activity"
-                  description="Review recent logins and security events"
+                  description={securityAlertsCount > 0 ? `${securityAlertsCount} noteworthy event${securityAlertsCount === 1 ? '' : 's'} need review` : 'Review recent logins and security events'}
                   onClick={() => onNavigate('security-log')}
                   showDivider={!canModerate}
                 />
@@ -8052,11 +9857,12 @@ function DataStatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SettingItem({ title, description, active, onToggle, showDivider = true }: { 
+function SettingItem({ title, description, active, onToggle, disabled = false, showDivider = true }: { 
   title: string, 
   description: string, 
   active: boolean, 
   onToggle: () => void,
+  disabled?: boolean,
   showDivider?: boolean
 }) {
   return (
@@ -8064,14 +9870,16 @@ function SettingItem({ title, description, active, onToggle, showDivider = true 
       <div className="flex items-center justify-between p-4">
         <div className="flex-1 pr-4">
           <h4 className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</h4>
-          <p className="text-xs text-slate-500 mt-0.5">{description}</p>
+          <p className={`text-xs mt-0.5 ${disabled ? 'text-slate-400' : 'text-slate-500'}`}>{description}</p>
         </div>
-        <div 
+        <button
+          type="button"
           onClick={onToggle}
-          className={`relative w-12 h-6 rounded-full transition-colors cursor-pointer ${active ? 'bg-primary' : 'bg-slate-200 dark:bg-slate-700'}`}
+          disabled={disabled}
+          className={`relative h-6 w-12 rounded-full transition-colors ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${active ? 'bg-primary' : 'bg-slate-200 dark:bg-slate-700'}`}
         >
           <div className={`absolute top-1 left-1 size-4 bg-white rounded-full transition-transform shadow-sm ${active ? 'translate-x-6' : 'translate-x-0'}`}></div>
-        </div>
+        </button>
       </div>
       {showDivider && <div className="absolute bottom-0 left-4 right-0 h-px bg-slate-100 dark:bg-slate-800"></div>}
     </div>
@@ -8143,7 +9951,7 @@ function SecurityOption({ icon, title, description, onClick, showDivider = true 
   );
 }
 
-function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showToast: (msg: string, type?: 'success' | 'info') => void }) {
+function ChangePasswordScreen({ currentUser, onBack, showToast }: { currentUser: User, onBack: () => void, showToast: (msg: string, type?: 'success' | 'info') => void }) {
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -8151,6 +9959,7 @@ function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showT
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRequestingReset, setIsRequestingReset] = useState(false);
 
   const handleUpdate = async () => {
     if (!currentPassword || !newPassword || !confirmPassword) {
@@ -8170,6 +9979,22 @@ function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showT
       showToast(error instanceof Error ? error.message : 'Unable to update password', 'info');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!currentUser.email) {
+      showToast('No account email is available for password recovery', 'info');
+      return;
+    }
+    try {
+      setIsRequestingReset(true);
+      const response = await requestPasswordReset(currentUser.email);
+      showToast(response.debugToken ? 'Password reset token generated for local development' : response.message);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to request password reset', 'info');
+    } finally {
+      setIsRequestingReset(false);
     }
   };
 
@@ -8199,14 +10024,22 @@ function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showT
                 onChange={(e) => setCurrentPassword(e.target.value)}
                 className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 pr-12 text-sm outline-none focus:border-primary transition-colors"
               />
-              <button 
+              <button
+                type="button"
                 onClick={() => setShowCurrent(!showCurrent)}
                 className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400"
               >
                 {showCurrent ? <EyeOff className="size-5" /> : <Eye className="size-5" />}
               </button>
             </div>
-            <button className="text-xs font-bold text-primary text-right w-full">Forgot Password?</button>
+            <button
+              type="button"
+              onClick={() => void handleForgotPassword()}
+              disabled={isRequestingReset}
+              className="text-xs font-bold text-primary text-right w-full disabled:opacity-50"
+            >
+              {isRequestingReset ? 'Sending reset email…' : 'Forgot Password?'}
+            </button>
           </div>
 
           <div className="space-y-2">
@@ -8219,7 +10052,8 @@ function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showT
                 onChange={(e) => setNewPassword(e.target.value)}
                 className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 pr-12 text-sm outline-none focus:border-primary transition-colors"
               />
-              <button 
+              <button
+                type="button"
                 onClick={() => setShowNew(!showNew)}
                 className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400"
               >
@@ -8238,7 +10072,8 @@ function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showT
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 pr-12 text-sm outline-none focus:border-primary transition-colors"
               />
-              <button 
+              <button
+                type="button"
                 onClick={() => setShowConfirm(!showConfirm)}
                 className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400"
               >
@@ -8270,7 +10105,7 @@ function ChangePasswordScreen({ onBack, showToast }: { onBack: () => void, showT
   );
 }
 
-function TwoFactorAuthScreen({ currentUser, onBack, onNext, onEnable, onDisable, showToast }: { currentUser: User, onBack: () => void, onNext: () => void, onEnable: (code: string) => Promise<string[]>, onDisable: (code: string) => Promise<void>, showToast: (msg: string, type?: 'success' | 'info') => void }) {
+function TwoFactorAuthScreen({ currentUser, securitySummary, onBack, onNext, onEnable, onDisable, onRegenerate, onOpenBackupCodes, onOpenHelp, showToast }: { currentUser: User, securitySummary: SecuritySummary | null, onBack: () => void, onNext: () => void, onEnable: (code: string) => Promise<string[]>, onDisable: (code: string) => Promise<void>, onRegenerate: (code: string) => Promise<string[]>, onOpenBackupCodes: () => void, onOpenHelp: () => void, showToast: (msg: string, type?: 'success' | 'info') => void }) {
   const [step, setStep] = useState<'intro' | 'setup'>(currentUser.hasTwoFactorEnabled ? 'setup' : 'intro');
   const [setupPayload, setSetupPayload] = useState<{ secret: string; qrCodeDataUrl: string } | null>(null);
   const [showSecret, setShowSecret] = useState(false);
@@ -8320,6 +10155,24 @@ function TwoFactorAuthScreen({ currentUser, onBack, onNext, onEnable, onDisable,
       onBack();
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Unable to disable 2FA', 'info');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleGenerateBackupCodes = async () => {
+    if (!disableCode.trim()) {
+      showToast('Enter a current authenticator or backup code to generate fresh backup codes', 'info');
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      await onRegenerate(disableCode);
+      setDisableCode('');
+      showToast('Fresh backup codes generated');
+      onOpenBackupCodes();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to generate backup codes', 'info');
     } finally {
       setIsSubmitting(false);
     }
@@ -8404,13 +10257,21 @@ function TwoFactorAuthScreen({ currentUser, onBack, onNext, onEnable, onDisable,
             <h3 className="text-xl font-bold">2FA Enabled</h3>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Your account requires an authenticator code or a backup code at sign-in.</p>
           </div>
+          {securitySummary && (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-900">
+              <p className="font-bold text-slate-900 dark:text-slate-100">Recovery status</p>
+              <p className="mt-2 text-slate-600 dark:text-slate-300">
+                {securitySummary.backupCodesRemaining} backup code{securitySummary.backupCodesRemaining === 1 ? '' : 's'} remaining • {securitySummary.passkeyCount} passkey{securitySummary.passkeyCount === 1 ? '' : 's'} registered • {securitySummary.isEmailVerified ? 'email verified' : 'email not verified'}.
+              </p>
+            </div>
+          )}
           <div className="space-y-2">
-            <label className="text-sm font-bold">Disable 2FA</label>
+            <label className="text-sm font-bold">Authenticator or Backup Code</label>
             <input
               type="text"
               value={disableCode}
               onChange={(e) => setDisableCode(e.target.value)}
-              placeholder="Current authenticator or backup code"
+              placeholder="Use this to disable 2FA or generate fresh backup codes"
               className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 text-sm outline-none focus:border-primary transition-colors"
             />
           </div>
@@ -8419,8 +10280,16 @@ function TwoFactorAuthScreen({ currentUser, onBack, onNext, onEnable, onDisable,
               Your email is not verified. If you disable 2FA without another recovery method, you can lock yourself out of this account.
             </div>
           )}
-          <button onClick={handleDisable} disabled={isSubmitting} className="w-full bg-red-600 text-white py-4 rounded-xl font-bold">
-            {isSubmitting ? 'Updating…' : 'Disable Two-Factor Authentication'}
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <button onClick={handleGenerateBackupCodes} disabled={isSubmitting} className="w-full rounded-xl border border-slate-200 bg-white py-4 font-bold text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
+              {isSubmitting ? 'Working…' : 'Generate Fresh Backup Codes'}
+            </button>
+            <button onClick={handleDisable} disabled={isSubmitting} className="w-full bg-red-600 text-white py-4 rounded-xl font-bold">
+              {isSubmitting ? 'Updating…' : 'Disable Two-Factor Authentication'}
+            </button>
+          </div>
+          <button type="button" onClick={onOpenBackupCodes} className="w-full py-3 text-sm font-bold text-primary">
+            Open Backup Codes
           </button>
         </div>
       </div>
@@ -8482,18 +10351,15 @@ function TwoFactorAuthScreen({ currentUser, onBack, onNext, onEnable, onDisable,
           <p className="text-center text-xs text-slate-400 mt-2">Enter the 6-digit code from your app</p>
         </div>
 
-        <div className="flex items-center gap-3 mt-8 mb-8">
-          <div className="size-6 rounded border border-slate-200 dark:border-slate-700 flex items-center justify-center">
-            <div className="size-3 bg-primary rounded-sm"></div>
-          </div>
-          <span className="text-sm text-slate-600 dark:text-slate-300">Remember this device for 30 days</span>
+        <div className="mt-8 mb-8 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+          Trusted devices are offered after successful 2FA sign-in. You can review or revoke them later from <span className="font-bold">Trusted Devices</span>.
         </div>
 
         <button onClick={handleVerify} disabled={isSubmitting} className="w-full bg-primary text-white py-4 rounded-xl font-bold shadow-lg shadow-primary/20 flex items-center justify-center gap-2">
           Verify and Activate <ShieldCheck className="size-5" />
         </button>
 
-        <button className="w-full py-4 text-sm font-bold text-slate-400 mt-4">Need help setting up?</button>
+        <button type="button" onClick={onOpenHelp} className="w-full py-4 text-sm font-bold text-primary mt-4">Need help setting up?</button>
 
         <div className="mt-10 flex items-center justify-center gap-2 text-slate-400">
           <Lock className="size-3" />
@@ -8513,11 +10379,19 @@ function TwoFactorBackupCodesScreen({ backupCodes, onBack, onRegenerate, onDone,
   }, [backupCodes]);
 
   const handleCopy = () => {
+    if (codes.length === 0) {
+      showToast('Generate fresh backup codes first', 'info');
+      return;
+    }
     navigator.clipboard.writeText(codes.join('\n'));
     showToast('Backup codes copied to clipboard!');
   };
 
   const handleDownload = () => {
+    if (codes.length === 0) {
+      showToast('Generate fresh backup codes first', 'info');
+      return;
+    }
     downloadTextFile('preprint-explorer-backup-codes.txt', codes.join('\n'));
     showToast('Backup codes downloaded as a text file.');
   };
@@ -8556,10 +10430,10 @@ function TwoFactorBackupCodesScreen({ backupCodes, onBack, onRegenerate, onDone,
         </div>
 
         <div className="flex gap-3 mb-8">
-          <button onClick={handleDownload} className="flex-1 bg-primary text-white py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2">
+          <button onClick={handleDownload} disabled={codes.length === 0} className="flex-1 bg-primary text-white py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
             <Download className="size-4" /> Download Codes
           </button>
-          <button onClick={handleCopy} className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2">
+          <button onClick={handleCopy} disabled={codes.length === 0} className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
             <Copy className="size-4" /> Copy All
           </button>
         </div>
@@ -8568,13 +10442,19 @@ function TwoFactorBackupCodesScreen({ backupCodes, onBack, onRegenerate, onDone,
           <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
             <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Backup Codes</span>
           </div>
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {codes.map(code => (
-              <div key={code} className="px-4 py-4 text-base font-mono font-medium text-slate-700 dark:text-slate-300 tracking-wider">
-                {code}
-              </div>
-            ))}
-          </div>
+          {codes.length === 0 ? (
+            <div className="px-4 py-6 text-sm text-slate-500 dark:text-slate-400">
+              No current backup codes are displayed. Generate a fresh set below to replace any old recovery codes and save them somewhere safe.
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">
+              {codes.map(code => (
+                <div key={code} className="px-4 py-4 text-base font-mono font-medium text-slate-700 dark:text-slate-300 tracking-wider">
+                  {code}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="space-y-3 mb-10">
@@ -8604,11 +10484,12 @@ function TwoFactorBackupCodesScreen({ backupCodes, onBack, onRegenerate, onDone,
   );
 }
 
-function PasskeysScreen({ passkeys, securitySummary, onBack, onRegisterPasskey, onDeletePasskey, showToast }: { passkeys: PasskeyCredential[], securitySummary: SecuritySummary | null, onBack: () => void, onRegisterPasskey: (label?: string) => Promise<PasskeyCredential[]>, onDeletePasskey: (passkeyId: string) => Promise<void>, showToast: (msg: string, type?: 'success' | 'info') => void }) {
+function PasskeysScreen({ currentUser, passkeys, securitySummary, onBack, onOpenTrustedDevices, onRegisterPasskey, onDeletePasskey, showToast }: { currentUser: User, passkeys: PasskeyCredential[], securitySummary: SecuritySummary | null, onBack: () => void, onOpenTrustedDevices: () => void, onRegisterPasskey: (label?: string) => Promise<PasskeyCredential[]>, onDeletePasskey: (passkeyId: string) => Promise<void>, showToast: (msg: string, type?: 'success' | 'info') => void }) {
   const [label, setLabel] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [confirmingRemovalId, setConfirmingRemovalId] = useState<string | null>(null);
+  const [isSendingVerification, setIsSendingVerification] = useState(false);
   const hasRecoveryRisk = securitySummary ? !securitySummary.isEmailVerified || (!securitySummary.hasTwoFactorEnabled && securitySummary.passkeyCount === 0) || (securitySummary.hasTwoFactorEnabled && securitySummary.backupCodesRemaining === 0 && securitySummary.passkeyCount === 0) : false;
 
   const handleRegister = async () => {
@@ -8647,6 +10528,22 @@ function PasskeysScreen({ passkeys, securitySummary, onBack, onRegisterPasskey, 
     }
   };
 
+  const handleSendVerificationEmail = async () => {
+    if (!currentUser.email) {
+      showToast('No account email is available for verification', 'info');
+      return;
+    }
+    try {
+      setIsSendingVerification(true);
+      const response = await requestEmailVerification();
+      showToast(response.debugToken ? 'Verification token generated for local development' : response.message);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to request email verification', 'info');
+    } finally {
+      setIsSendingVerification(false);
+    }
+  };
+
   return (
     <div className="relative flex flex-col h-full bg-white dark:bg-slate-950">
       <header className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center gap-4 sticky top-0 z-10 bg-white dark:bg-slate-900">
@@ -8677,6 +10574,28 @@ function PasskeysScreen({ passkeys, securitySummary, onBack, onRegisterPasskey, 
           </div>
         )}
 
+        <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 text-sm dark:border-slate-800 dark:bg-slate-900">
+          <p className="font-bold text-slate-900 dark:text-slate-100">Passkeys vs trusted devices</p>
+          <p className="mt-2 text-slate-600 dark:text-slate-300">
+            Passkeys are your sign-in credentials. Trusted devices are browsers or devices you chose to remember after two-factor verification. Removing a trusted device does not remove a passkey, and removing a passkey does not sign a device out.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button type="button" onClick={onOpenTrustedDevices} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+              Open Trusted Devices
+            </button>
+            {securitySummary && !securitySummary.isEmailVerified && (
+              <button
+                type="button"
+                onClick={() => void handleSendVerificationEmail()}
+                disabled={isSendingVerification}
+                className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-bold text-primary disabled:opacity-50"
+              >
+                {isSendingVerification ? 'Sending…' : 'Verify Recovery Email'}
+              </button>
+            )}
+          </div>
+        </div>
+
         <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-6">
           <h3 className="text-lg font-bold">Register a new passkey</h3>
           <p className="mt-2 text-sm text-slate-500">Use Face ID, Touch ID, Windows Hello, or a hardware security key to sign in without a password.</p>
@@ -8696,6 +10615,9 @@ function PasskeysScreen({ passkeys, securitySummary, onBack, onRegisterPasskey, 
 
         <div className="space-y-4">
           <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Registered Passkeys</h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Removing a passkey can require recent authentication and may be blocked if it would weaken account recovery too far.
+          </p>
           {passkeys.length === 0 && (
             <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-6 text-center text-sm text-slate-500">
               No passkeys registered yet.
@@ -8865,6 +10787,13 @@ function TrustedDevicesScreen({ devices, onBack, onRemoveDevice, showToast }: { 
         <h2 className="text-xl font-bold">Trusted Devices</h2>
       </header>
       <div className="p-6 space-y-6 overflow-y-auto no-scrollbar">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm dark:border-slate-800 dark:bg-slate-900">
+          <p className="font-bold text-slate-900 dark:text-slate-100">What you are seeing here</p>
+          <p className="mt-2 text-slate-600 dark:text-slate-300">
+            <span className="font-bold">Remembered</span> devices are browsers you allowed to skip repeated two-factor prompts for a limited time. <span className="font-bold">Session</span> entries are currently signed-in sessions. The current session cannot be revoked from this list.
+          </p>
+        </div>
+
         <div className="space-y-4">
           <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-2">Authorized Devices</h3>
           {devices.length === 0 && (
@@ -8966,6 +10895,13 @@ function SecurityLogScreen({ logs, onBack, onRotateSession, onLogoutOthers, show
 
       <div className="flex-1 overflow-y-auto">
         <div className="px-4 py-6">
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-900">
+            <p className="font-bold text-slate-900 dark:text-slate-100">About recent-auth checks</p>
+            <p className="mt-2 text-slate-600 dark:text-slate-300">
+              Sensitive security changes can ask you to confirm your identity again with a password, authenticator code, or passkey even during an active session. That protects this account if a signed-in browser is left unattended.
+            </p>
+          </div>
+
           <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-4">Activity Log</h3>
           {logs.length === 0 && (
             <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-6 text-center text-sm text-slate-500">
@@ -9042,7 +10978,7 @@ function SecurityLogScreen({ logs, onBack, onRotateSession, onLogoutOthers, show
   );
 }
 
-function Sidebar({ currentUser, currentScreen, legalType, unreadNotificationsCount, unreadMessagesCount, openModerationCount, onClose, onNavigate, onLegal, onSignOut }: { 
+function Sidebar({ currentUser, currentScreen, legalType, unreadNotificationsCount, unreadMessagesCount, openModerationCount, onClose, onOpenNotifications, onNavigate, onLegal, onSignOut }: { 
   currentUser: User,
   currentScreen: Screen,
   legalType: 'tos' | 'privacy',
@@ -9050,6 +10986,7 @@ function Sidebar({ currentUser, currentScreen, legalType, unreadNotificationsCou
   unreadMessagesCount: number,
   openModerationCount: number,
   onClose: () => void, 
+  onOpenNotifications: () => void,
   onNavigate: (s: Screen) => void,
   onLegal: (type: 'tos' | 'privacy') => void,
   onSignOut: () => Promise<void>
@@ -9091,7 +11028,7 @@ function Sidebar({ currentUser, currentScreen, legalType, unreadNotificationsCou
 
       <div className="flex-1 overflow-y-auto p-4 space-y-2 no-scrollbar">
         <SidebarItem icon={<Home className="size-5" />} label="Home" active={currentScreen === 'home'} onClick={() => onNavigate('home')} />
-        <SidebarItem icon={<Bell className="size-5" />} label="Alerts" active={currentScreen === 'notifications'} badge={unreadNotificationsCount > 0 ? unreadNotificationsCount : undefined} onClick={() => onNavigate('notifications')} />
+        <SidebarItem icon={<Bell className="size-5" />} label="Alerts" active={currentScreen === 'notifications'} badge={unreadNotificationsCount > 0 ? unreadNotificationsCount : undefined} onClick={onOpenNotifications} />
         <SidebarItem icon={<TrendingUp className="size-5" />} label="Trends" active={currentScreen === 'trends' || currentScreen === 'topic-insight'} onClick={() => onNavigate('trends')} />
         <SidebarItem icon={<Rss className="size-5" />} label="Feeds" active={currentScreen === 'feeds'} onClick={() => onNavigate('feeds')} />
         <SidebarItem icon={<LibraryIcon className="size-5" />} label="Library" active={currentScreen === 'library' || currentScreen === 'collections' || currentScreen === 'collection-detail' || currentScreen === 'share'} onClick={() => onNavigate('library')} />
@@ -9355,7 +11292,7 @@ function ChatScreen({ currentUserId, onChatClick, onStartChat, onBack, showToast
   );
 }
 
-function ChatDetailScreen({ currentUserId, chat, onBack, onOpenUserProfile, onChatUpdated, onReport, onBlockUser, onUnblockUser, isBlocked, showToast }: { currentUserId: string, chat: Chat, onBack: () => void, onOpenUserProfile: (userId: string) => void, onChatUpdated: (chat: Chat) => void, onReport: () => void, onBlockUser: (userId: string) => Promise<void>, onUnblockUser: (userId: string) => Promise<void>, isBlocked: boolean, showToast: (msg: string, type?: 'success' | 'info') => void }) {
+function ChatDetailScreen({ currentUserId, chat, launchContext, onDismissLaunchContext, onBack, onOpenUserProfile, onChatUpdated, onReport, onBlockUser, onUnblockUser, isBlocked, showToast }: { currentUserId: string, chat: Chat, launchContext: ChatEntryContext | null, onDismissLaunchContext: () => void, onBack: () => void, onOpenUserProfile: (userId: string) => void, onChatUpdated: (chat: Chat) => void, onReport: () => void, onBlockUser: (userId: string) => Promise<void>, onUnblockUser: (userId: string) => Promise<void>, isBlocked: boolean, showToast: (msg: string, type?: 'success' | 'info') => void }) {
   const { dataset } = useAppData();
   const [message, setMessage] = useState('');
   const [isUpdatingBlock, setIsUpdatingBlock] = useState(false);
@@ -9363,7 +11300,12 @@ function ChatDetailScreen({ currentUserId, chat, onBack, onOpenUserProfile, onCh
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const otherUserId = chat.participants.find(p => p !== currentUserId);
   const otherUser = dataset.users.find(u => u.id === otherUserId);
-  const generatedMeetingLink = `${window.location.origin}/chat/${chat.id}?mode=meeting`;
+  const generatedMeetingLink = (meetingType?: MeetingInviteType) => buildChatEntryLink(chat.id, { mode: 'meeting', meetingType });
+  const meetingBannerLabel = launchContext?.meetingType === 'audio'
+    ? 'Audio meeting invite opened for this conversation.'
+    : launchContext?.meetingType === 'video'
+      ? 'Video meeting invite opened for this conversation.'
+      : 'Meeting invite opened for this conversation.';
   const messageGroups = chat.messages.reduce<Array<{ label: string; items: Message[] }>>((groups, item) => {
     const label = formatChatDayLabel(item.createdAt);
     const lastGroup = groups[groups.length - 1];
@@ -9419,7 +11361,7 @@ function ChatDetailScreen({ currentUserId, chat, onBack, onOpenUserProfile, onCh
   };
 
   const handleShareMeetingLink = async (mode: 'audio' | 'video') => {
-    await copyText(`${generatedMeetingLink}&type=${mode}`);
+    await copyText(generatedMeetingLink(mode));
     showToast(`${mode === 'audio' ? 'Audio' : 'Video'} invite link copied`);
   };
 
@@ -9427,7 +11369,7 @@ function ChatDetailScreen({ currentUserId, chat, onBack, onOpenUserProfile, onCh
     const attachmentText = kind === 'paper-link'
       ? `Shared library link: ${window.location.origin}/library`
       : kind === 'meeting-link'
-        ? `Shared meeting link: ${generatedMeetingLink}`
+        ? `Shared meeting link: ${generatedMeetingLink('video')}`
         : 'Citation note: I found a relevant reference worth reviewing together.';
     try {
       const response = await sendMessage(chat.id, attachmentText);
@@ -9487,6 +11429,25 @@ function ChatDetailScreen({ currentUserId, chat, onBack, onOpenUserProfile, onCh
       </header>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar">
+        {launchContext?.mode === 'meeting' && (
+          <div className="flex items-start gap-3 rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-sm text-primary">
+            <Video className="mt-0.5 size-4 shrink-0" />
+            <div className="flex-1">
+              <p className="font-semibold">{meetingBannerLabel}</p>
+              <p className="mt-1 text-xs text-primary/80">
+                Use the phone or video actions above to share another invite link from this chat.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onDismissLaunchContext}
+              className="rounded-full p-1 text-primary/70 transition-colors hover:bg-primary/10 hover:text-primary"
+              aria-label="Dismiss meeting invite notice"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+        )}
         {(messageGroups.length > 0 ? messageGroups : [{ label: 'Today', items: chat.messages }]).map((group) => (
           <React.Fragment key={group.label}>
             <div className="text-center py-4">

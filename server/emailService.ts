@@ -7,7 +7,7 @@ type EmailMessage = {
   html: string;
 };
 
-type DeliveryResult = {
+export type DeliveryResult = {
   delivered: boolean;
   provider: 'smtp' | 'debug';
 };
@@ -68,5 +68,66 @@ export async function sendPasswordResetEmail(to: string, token: string) {
     subject: 'Reset your Preprint Explorer password',
     text: `Reset your password by opening: ${url}`,
     html: wrapHtml('Reset your password', `<p>A password reset was requested for your account.</p><p><a href="${url}">Reset password</a></p>`),
+  });
+}
+
+export async function sendDigestEmail(input: {
+  to: string;
+  subject: string;
+  heading: string;
+  intro: string;
+  highlights: Array<{ title: string; meta: string; summary: string; url?: string | null }>;
+  footer?: string;
+}) {
+  const highlightsText = input.highlights.map((highlight, index) => (
+    `${index + 1}. ${highlight.title}\n${highlight.meta}\n${highlight.summary}${highlight.url ? `\n${highlight.url}` : ''}`
+  )).join('\n\n');
+  const text = [
+    input.heading,
+    '',
+    input.intro,
+    '',
+    highlightsText || 'No highlights available for this digest cycle.',
+    input.footer ?? 'Preprint Explorer',
+  ].join('\n');
+  const body = `
+    <p>${input.intro}</p>
+    ${input.highlights.length > 0 ? `<ol style="padding-left:18px">${input.highlights.map((highlight) => `
+      <li style="margin-bottom:16px">
+        <p style="margin:0 0 4px;font-weight:700">${highlight.title}</p>
+        <p style="margin:0 0 6px;color:#475569;font-size:12px;text-transform:uppercase;letter-spacing:0.08em">${highlight.meta}</p>
+        <p style="margin:0">${highlight.summary}</p>
+        ${highlight.url ? `<p style="margin:8px 0 0"><a href="${highlight.url}">Open paper</a></p>` : ''}
+      </li>
+    `).join('')}</ol>` : '<p>No highlights are available for this digest cycle.</p>'}
+    ${input.footer ? `<p style="margin-top:24px;color:#475569">${input.footer}</p>` : ''}
+  `;
+
+  return send({
+    to: input.to,
+    subject: input.subject,
+    text,
+    html: wrapHtml(input.heading, body),
+  });
+}
+
+export async function sendNotificationEmail(input: {
+  to: string;
+  subject: string;
+  heading: string;
+  message: string;
+  actionLabel?: string;
+  actionUrl?: string | null;
+}) {
+  const text = `${input.heading}\n\n${input.message}${input.actionUrl ? `\n\n${input.actionLabel ?? 'Open'}: ${input.actionUrl}` : ''}`;
+  const body = `
+    <p>${input.message}</p>
+    ${input.actionUrl ? `<p><a href="${input.actionUrl}">${input.actionLabel ?? 'Open in Preprint Explorer'}</a></p>` : ''}
+  `;
+  return send({
+    to: input.to,
+    subject: input.subject,
+    text,
+    html: wrapHtml(input.heading, body),
   });
 }

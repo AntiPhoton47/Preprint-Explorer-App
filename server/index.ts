@@ -16,12 +16,15 @@ import { initDb, getDbTimestamp, hashUserPassword, type IngestedPreprintRecord, 
 import { authStore } from './authStore';
 import type { Preprint } from '../src/types';
 import { contentStore, type ContentSyncDefinitionRecord } from './contentStore';
-import { coreStore, type StoredModerationAction, type StoredModerationReport, type StoredNotification, type StoredPopularSearch, type StoredSavedSearch, type StoredUser, type StoredSettings } from './coreStore';
+import { coreStore, type StoredCollection, type StoredCollectionCollaborator, type StoredModerationAction, type StoredModerationReport, type StoredNotification, type StoredPopularSearch, type StoredProductAnnouncement, type StoredSavedSearch, type StoredUser, type StoredSettings } from './coreStore';
 import { securityStore, type StoredPasskey, type StoredSecurityEvent, type StoredSession, type StoredTrustedDevice, type StoredTwoFactor } from './securityStore';
-import { assignModerationReportSchema, blockUserSchema, bulkModerationSchema, contentIngestSchema, contentSyncDefinitionSchema, escalateModerationReportSchema, changePasswordSchema, chatMessageSchema, completeTwoFactorLoginSchema, createChatSchema, loginSchema, parseOrThrow, passwordResetRequestSchema, passwordResetSchema, registerSchema, reportSchema, reviewModerationReportSchema, settingsSchema, shareSchema, updateProfileSchema } from './validation';
-import { sendPasswordResetEmail, sendVerificationEmail } from './emailService';
+import { assignModerationReportSchema, blockUserSchema, bulkModerationSchema, contentIngestSchema, contentSyncDefinitionSchema, createCollectionSchema, digestSendSchema, escalateModerationReportSchema, changePasswordSchema, chatMessageSchema, completeTwoFactorLoginSchema, createChatSchema, loginSchema, parseOrThrow, passwordResetRequestSchema, passwordResetSchema, productAnnouncementSchema, profilePublicationImportSchema, pushSubscriptionSchema, registerSchema, reportSchema, reviewModerationReportSchema, settingsSchema, shareSchema, updateCollectionAccessSchema, updateCollectionPapersSchema, updateCollectionSchema, updateProfileSchema } from './validation';
+import { sendNotificationEmail, sendPasswordResetEmail, sendVerificationEmail } from './emailService';
 import { emitMonitoringEvent } from './monitoring';
 import { contentSources, getContentSource } from './sources';
+import { fetchProfilePublicationsFromSource } from './profilePublicationImport';
+import { runDueDigests, sendDigestNow } from './digestService';
+import { getPushPublicKey, sendPushNotification } from './pushService';
 
 initDb();
 await coreStore.init();
@@ -41,6 +44,7 @@ const webAuthnOrigin = process.env.WEBAUTHN_ORIGIN ?? 'http://localhost:3000';
 const initialAdminEmail = process.env.INITIAL_ADMIN_EMAIL ?? 'aris.thorne@uzh.ch';
 let httpServer: Server | null = null;
 let contentSyncInterval: NodeJS.Timeout | null = null;
+let digestInterval: NodeJS.Timeout | null = null;
 let isShuttingDown = false;
 
 function wrapRouteHandler<T extends (...args: any[]) => any>(handler: T): T {
@@ -78,6 +82,10 @@ async function shutdown(signal: string, error?: unknown) {
   if (contentSyncInterval) {
     clearInterval(contentSyncInterval);
     contentSyncInterval = null;
+  }
+  if (digestInterval) {
+    clearInterval(digestInterval);
+    digestInterval = null;
   }
   const errorMessage = error instanceof Error ? error.message : error ? String(error) : undefined;
   console.warn(JSON.stringify({
@@ -402,6 +410,21 @@ function mapIngestedRecordToPreprint(record: IngestedPreprintRecord): Preprint {
 
 function normalizeSearchQuery(query: string) {
   return query.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizePersonLabel(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ');
+}
+
+function namesMatch(authorName: string, userName: string) {
+  const normalizedAuthor = normalizePersonLabel(authorName);
+  const normalizedUser = normalizePersonLabel(userName);
+  if (!normalizedAuthor || !normalizedUser) {
+    return false;
+  }
+  return normalizedAuthor === normalizedUser
+    || normalizedAuthor.includes(normalizedUser)
+    || normalizedUser.includes(normalizedAuthor);
 }
 
 function tokenizeSearchQuery(query: string) {
@@ -863,7 +886,7 @@ async function buildUser(user: UserRow, viewerId?: string) {
   const catalog = await contentStore.listPreprints(1000);
   const matchedPreprints = catalog
     .map(mapIngestedRecordToPreprint)
-    .filter(preprint => preprint.authors.includes(user.name));
+    .filter(preprint => preprint.authors.some((author) => namesMatch(author, user.name)));
   const publicationIds = matchedPreprints.map(preprint => preprint.id);
   const publicationCount = publicationIds.length;
   const citationCount = matchedPreprints.reduce((sum, preprint) => sum + (preprint.citations ?? 0), 0);
@@ -880,6 +903,7 @@ async function buildUser(user: UserRow, viewerId?: string) {
     name: user.name,
     title: user.title,
     email: user.email,
+    orcidId: user.orcid_id ?? undefined,
     isAdmin: Boolean(user.is_admin),
     affiliation: user.affiliation,
     institutionId: user.institution_id ?? undefined,
@@ -972,6 +996,179 @@ function buildNotification(row: NotificationRow) {
   };
 }
 
+function buildProductAnnouncement(row: StoredProductAnnouncement) {
+  return {
+    id: row.id,
+    title: row.title,
+    message: row.message,
+    actionUrl: row.action_url ?? undefined,
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+async function buildCollectionsForUser(userId: string) {
+  const user = await coreStore.findUserById(userId);
+  const collections = await coreStore.listCollectionsForUser(userId, user?.email ?? null) as StoredCollection[];
+  const collectionIds = collections.map((collection) => collection.id);
+  const collaborators = await coreStore.listCollectionCollaborators(collectionIds) as StoredCollectionCollaborator[];
+  const preprintLinks = await coreStore.listCollectionPreprintIds(collectionIds);
+  const preprintMap = new Map(PREPRINTS.map((preprint) => [preprint.id, preprint]));
+
+  return collections.map((collection) => {
+    const preprintIds = preprintLinks
+      .filter((entry) => entry.collection_id === collection.id)
+      .map((entry) => entry.preprint_id);
+    const collectionCollaborators = collaborators
+      .filter((entry) => entry.collection_id === collection.id)
+      .map((entry) => ({
+        email: entry.email,
+        role: entry.role,
+      }));
+    const totalCitations = preprintIds.reduce((sum, preprintId) => sum + (preprintMap.get(preprintId)?.citations ?? 0), 0);
+
+    return {
+      id: collection.id,
+      ownerId: collection.owner_user_id,
+      name: collection.name,
+      description: collection.description ?? '',
+      preprintIds,
+      collaborators: collectionCollaborators,
+      sharedWith: collectionCollaborators.map((entry) => entry.email),
+      shareLinkToken: collection.share_link_token,
+      paperCount: preprintIds.length,
+      totalCitations,
+      updatedAt: collection.updated_at,
+      imageUrl: collection.image_url,
+    };
+  });
+}
+
+async function getCollectionAccessForUser(userId: string, collectionId: string) {
+  const collection = await coreStore.findCollectionById(collectionId);
+  if (!collection) {
+    return { collection: undefined, role: 'none' as const };
+  }
+  if (collection.owner_user_id === userId) {
+    return { collection, role: 'owner' as const };
+  }
+  const user = await coreStore.findUserById(userId);
+  if (!user?.email) {
+    return { collection, role: 'none' as const };
+  }
+  const collaborators = await coreStore.listCollectionCollaborators([collectionId]);
+  const collaborator = collaborators.find((entry) => entry.email.toLowerCase() === user.email.toLowerCase());
+  if (!collaborator) {
+    return { collection, role: 'none' as const };
+  }
+  return { collection, role: collaborator.role };
+}
+
+function getAbsoluteActionUrl(actionUrl?: string | null) {
+  if (!actionUrl) {
+    return null;
+  }
+  const baseUrl = (process.env.APP_URL ?? process.env.WEBAUTHN_ORIGIN ?? 'http://localhost:3000').replace(/\/$/, '');
+  return `${baseUrl}${actionUrl.startsWith('/') ? actionUrl : `/${actionUrl}`}`;
+}
+
+function shouldDeliverEmailNotification(type: NotificationRow['type'], settings: Awaited<ReturnType<typeof getSettings>>) {
+  if (!settings.emailEnabled) {
+    return false;
+  }
+  if (type === 'feed') {
+    return settings.newPublications;
+  }
+  if (type === 'citation') {
+    return settings.citationAlerts;
+  }
+  if (type === 'product') {
+    return settings.productUpdates;
+  }
+  return true;
+}
+
+function shouldDeliverPushNotification(type: NotificationRow['type'], settings: Awaited<ReturnType<typeof getSettings>>) {
+  if (!settings.pushEnabled) {
+    return false;
+  }
+  if (type === 'feed') {
+    return settings.newPublications;
+  }
+  if (type === 'citation') {
+    return settings.citationAlerts;
+  }
+  if (type === 'product') {
+    return settings.productUpdates;
+  }
+  return true;
+}
+
+async function notifyUser(input: {
+  userId: string;
+  type: NotificationRow['type'];
+  title: string;
+  description: string;
+  createdAt?: string;
+  actorUserId?: string | null;
+  actionUrl?: string | null;
+  emailOverride?: boolean;
+  pushOverride?: boolean;
+}) {
+  const createdAt = input.createdAt ?? getDbTimestamp();
+  await coreStore.createNotification({
+    userId: input.userId,
+    type: input.type,
+    title: input.title,
+    description: input.description,
+    createdAt,
+    actorUserId: input.actorUserId ?? null,
+    actionUrl: input.actionUrl ?? null,
+  });
+
+  const settings = await getSettings(input.userId);
+  const user = await coreStore.findUserById(input.userId);
+  if (user?.email && input.emailOverride !== false && shouldDeliverEmailNotification(input.type, settings)) {
+    try {
+      await sendNotificationEmail({
+        to: user.email,
+        subject: input.title,
+        heading: input.title,
+        message: input.description,
+        actionLabel: 'Open in Preprint Explorer',
+        actionUrl: getAbsoluteActionUrl(input.actionUrl ?? null),
+      });
+    } catch (error) {
+      console.warn(JSON.stringify({
+        type: 'notification_email_failed',
+        userId: input.userId,
+        notificationType: input.type,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+
+  if (input.pushOverride !== false && shouldDeliverPushNotification(input.type, settings)) {
+    try {
+      const subscriptions = await coreStore.listPushSubscriptionsByUserIds([input.userId]);
+      await sendPushNotification(subscriptions, {
+        title: input.title,
+        body: input.description,
+        actionUrl: input.actionUrl ?? null,
+      });
+    } catch (error) {
+      console.warn(JSON.stringify({
+        type: 'notification_push_failed',
+        userId: input.userId,
+        notificationType: input.type,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+
+  sendLiveEvent(input.userId, { type: 'notifications-updated' });
+}
+
 function getModerationPolicy() {
   const severeReasons = (process.env.MODERATION_AUTO_ESCALATE_REASONS ?? 'harassment,misinformation,copyright')
     .split(',')
@@ -1005,15 +1202,16 @@ async function applyModerationPolicy(report: StoredModerationReport) {
       const assigned = await coreStore.assignModerationReport(updatedReport.id, moderator.id, getDbTimestamp(), moderator.id);
       if (assigned) {
         updatedReport = assigned;
-        await coreStore.createNotification({
+        await notifyUser({
           userId: moderator.id,
-          type: 'comment',
+          type: 'moderation',
           title: 'Moderation report assigned',
           description: `A ${updatedReport.reason} report was assigned to you.`,
           createdAt: getDbTimestamp(),
           actionUrl: `/moderation/${updatedReport.id}`,
+          emailOverride: true,
+          pushOverride: true,
         });
-        sendLiveEvent(moderator.id, { type: 'notifications-updated' });
       }
     }
   }
@@ -1492,19 +1690,21 @@ const handleContentIngestRequest = async (req: AuthenticatedRequest, res: Respon
       return res.status(404).json({ error: 'Unknown content source' });
     }
     const payload = await executeSourceIngest(source.id, input.query, input.maxResults);
-    await coreStore.createNotification({
+    await notifyUser({
       userId: req.userId!,
       type: 'feed',
       title: `${source.label} sync completed`,
       description: `Imported ${payload.imported} ${source.label} records for "${input.query}".`,
       createdAt: getDbTimestamp(),
+      actionUrl: '/home',
+      emailOverride: false,
+      pushOverride: false,
     });
     sendLiveEvent(req.userId!, {
       type: 'content-updated',
       sourceLabel: payload.dataset.sourceLabel,
       total: payload.dataset.preprints.length,
     });
-    sendLiveEvent(req.userId!, { type: 'notifications-updated' });
     res.status(201).json(payload);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to ingest content';
@@ -1517,6 +1717,76 @@ const handleContentIngestRequest = async (req: AuthenticatedRequest, res: Respon
 
 app.post('/api/content/ingest/:sourceId', requireAuth, requireCsrf, async (req: AuthenticatedRequest, res) => {
   return handleContentIngestRequest(req, res, req.params.sourceId);
+});
+
+app.post('/api/profile/publications/import', requireAuth, requireCsrf, async (req: AuthenticatedRequest, res) => {
+  let input;
+  try {
+    input = parseOrThrow(profilePublicationImportSchema, req.body);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Invalid publication import request';
+    if (error instanceof Error && error.name === 'ValidationError') {
+      return res.status(400).json({ error: message });
+    }
+    throw error;
+  }
+
+  const user = await coreStore.findUserById(req.userId!);
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  try {
+    const authorName = input.authorName?.trim() || user.name;
+    const importedPreprints = await fetchProfilePublicationsFromSource({
+      source: input.source,
+      authorName,
+      orcidId: input.orcidId,
+      maxResults: input.maxResults,
+    });
+
+    if (importedPreprints.length === 0) {
+      return res.status(200).json({
+        imported: 0,
+        sourceLabel: input.source === 'orcid' ? 'ORCID' : 'arXiv',
+        dataset: await buildContentDatasetPayload(1000),
+      });
+    }
+
+    const syncRun = await contentStore.createSyncRun(
+      input.source === 'orcid' ? 'ORCID' : 'arXiv',
+      `profile:${req.userId}:${authorName}`,
+    );
+    await contentStore.upsertPreprints(importedPreprints.map((preprint) => ({
+      ...preprint,
+      syncRunId: syncRun.id,
+    })));
+    await contentStore.completeSyncRun(syncRun.id, 'succeeded', importedPreprints.length);
+
+    await notifyUser({
+      userId: req.userId!,
+      type: 'feed',
+      title: `${input.source === 'orcid' ? 'ORCID' : 'arXiv'} import completed`,
+      description: `Imported ${importedPreprints.length} publications for ${authorName}.`,
+      createdAt: getDbTimestamp(),
+      actionUrl: '/profile',
+      emailOverride: false,
+      pushOverride: false,
+    });
+    sendLiveEvent(req.userId!, {
+      type: 'content-updated',
+      sourceLabel: input.source === 'orcid' ? 'ORCID profile import' : 'arXiv author import',
+      total: importedPreprints.length,
+    });
+    return res.status(201).json({
+      imported: importedPreprints.length,
+      sourceLabel: input.source === 'orcid' ? 'ORCID' : 'arXiv',
+      dataset: await buildContentDatasetPayload(1000),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to import publications';
+    return res.status(502).json({ error: message });
+  }
 });
 
 app.post('/api/auth/register', authRateLimiter, async (req, res) => {
@@ -1544,6 +1814,7 @@ app.post('/api/auth/register', authRateLimiter, async (req, res) => {
     name,
     email: email.toLowerCase(),
     passwordHash: hashUserPassword(password),
+    orcidId: null,
     affiliation,
     institutionId: null,
     imageUrl: `https://i.pravatar.cc/150?u=${id}`,
@@ -2001,6 +2272,87 @@ app.get('/api/notifications', requireAuth, async (req: AuthenticatedRequest, res
   });
 });
 
+app.get('/api/collections', requireAuth, async (req: AuthenticatedRequest, res) => {
+  res.json({
+    collections: await buildCollectionsForUser(req.userId!),
+  });
+});
+
+app.post('/api/collections', requireAuth, requireCsrf, async (req: AuthenticatedRequest, res) => {
+  const payload = parseOrThrow(createCollectionSchema, req.body);
+  const createdAt = getDbTimestamp();
+  await coreStore.createCollection({
+    ownerUserId: req.userId!,
+    name: payload.name,
+    description: payload.description || null,
+    imageUrl: payload.imageUrl || `https://picsum.photos/seed/${encodeURIComponent(payload.name)}/400/400`,
+    shareLinkToken: `collection-${crypto.randomUUID().slice(0, 12)}`,
+    createdAt,
+  });
+  res.status(201).json({
+    collections: await buildCollectionsForUser(req.userId!),
+  });
+});
+
+app.patch('/api/collections/:collectionId', requireAuth, requireCsrf, async (req: AuthenticatedRequest, res) => {
+  const payload = parseOrThrow(updateCollectionSchema, req.body);
+  const updated = await coreStore.updateCollectionMetadata({
+    collectionId: req.params.collectionId,
+    ownerUserId: req.userId!,
+    name: payload.name,
+    description: payload.description || null,
+    imageUrl: payload.imageUrl || `https://picsum.photos/seed/${encodeURIComponent(payload.name)}/400/400`,
+    updatedAt: getDbTimestamp(),
+  });
+  if (!updated) {
+    return res.status(404).json({ error: 'Collection not found or not editable' });
+  }
+  res.json({
+    collections: await buildCollectionsForUser(req.userId!),
+  });
+});
+
+app.patch('/api/collections/:collectionId/papers', requireAuth, requireCsrf, async (req: AuthenticatedRequest, res) => {
+  const payload = parseOrThrow(updateCollectionPapersSchema, req.body);
+  const access = await getCollectionAccessForUser(req.userId!, req.params.collectionId);
+  if (!access.collection) {
+    return res.status(404).json({ error: 'Collection not found' });
+  }
+  if (!['owner', 'editor'].includes(access.role)) {
+    return res.status(403).json({ error: 'You do not have permission to edit this collection' });
+  }
+  await coreStore.replaceCollectionPreprintIds({
+    collectionId: req.params.collectionId,
+    preprintIds: payload.preprintIds,
+    updatedAt: getDbTimestamp(),
+  });
+  res.json({
+    collections: await buildCollectionsForUser(req.userId!),
+  });
+});
+
+app.patch('/api/collections/:collectionId/access', requireAuth, requireCsrf, async (req: AuthenticatedRequest, res) => {
+  const payload = parseOrThrow(updateCollectionAccessSchema, req.body);
+  const access = await getCollectionAccessForUser(req.userId!, req.params.collectionId);
+  if (!access.collection) {
+    return res.status(404).json({ error: 'Collection not found' });
+  }
+  if (access.role !== 'owner') {
+    return res.status(403).json({ error: 'Only the collection owner can manage access' });
+  }
+  await coreStore.replaceCollectionCollaborators({
+    collectionId: req.params.collectionId,
+    collaborators: payload.collaborators.map((entry) => ({
+      email: entry.email.toLowerCase(),
+      role: entry.role,
+    })),
+    updatedAt: getDbTimestamp(),
+  });
+  res.json({
+    collections: await buildCollectionsForUser(req.userId!),
+  });
+});
+
 app.post('/api/notifications/mark-read', requireAuth, requireCsrf, async (req: AuthenticatedRequest, res) => {
   await coreStore.markNotificationsRead(req.userId!);
   sendLiveEvent(req.userId!, { type: 'notifications-updated' });
@@ -2025,14 +2377,16 @@ app.post('/api/moderation/block-user', requireAuth, requireCsrf, moderationRateL
     return res.status(400).json({ error: 'You cannot block yourself' });
   }
   await coreStore.createBlockedUser(req.userId!, blockedUserId, getDbTimestamp());
-  await coreStore.createNotification({
+  await notifyUser({
     userId: req.userId!,
-    type: 'comment',
+    type: 'account',
     title: 'User blocked',
     description: 'This user can no longer follow, message, or share papers with you.',
     createdAt: getDbTimestamp(),
+    actionUrl: '/notifications/system',
+    emailOverride: true,
+    pushOverride: true,
   });
-  sendLiveEvent(req.userId!, { type: 'notifications-updated' });
   broadcastLiveEvent([req.userId!, blockedUserId], { type: 'social-updated' });
   res.status(201).json({
     blockedUserIds: await coreStore.listBlockedUserIds(req.userId!),
@@ -2056,16 +2410,18 @@ app.post('/api/moderation/report', requireAuth, requireCsrf, moderationRateLimit
     createdAt: getDbTimestamp(),
   });
   report = await applyModerationPolicy(report);
-  await coreStore.createNotification({
+  await notifyUser({
     userId: req.userId!,
-    type: 'comment',
+    type: 'moderation',
     title: 'Report submitted',
     description: report.escalated_at
       ? `Your ${input.targetType} report was queued and escalated for priority review.`
       : `Your ${input.targetType} report is queued for review.`,
     createdAt: getDbTimestamp(),
+    actionUrl: '/notifications/system',
+    emailOverride: true,
+    pushOverride: true,
   });
-  sendLiveEvent(req.userId!, { type: 'notifications-updated' });
   res.status(201).json({ reportId: report.id });
 });
 
@@ -2079,6 +2435,52 @@ app.get('/api/admin/moderation/reports', requireAuth, requireAdmin, async (req: 
     .filter((user) => Boolean(user.is_admin))
     .map((user) => ({ id: user.id, name: user.name }));
   res.json({ reports, moderators });
+});
+
+app.get('/api/admin/product-updates', requireAuth, requireAdmin, async (_req: AuthenticatedRequest, res) => {
+  const announcements = await Promise.all((await coreStore.listProductAnnouncements()).map(async (announcement) => {
+    const author = await coreStore.findUserById(announcement.created_by_user_id);
+    return {
+      ...buildProductAnnouncement(announcement),
+      createdByName: author?.name ?? 'Admin',
+    };
+  }));
+  res.json({ announcements });
+});
+
+app.post('/api/admin/product-updates', requireAuth, requireAdmin, requireCsrf, moderationRateLimiter, async (req: AuthenticatedRequest, res) => {
+  const input = parseOrThrow(productAnnouncementSchema, req.body);
+  const createdAt = getDbTimestamp();
+  const announcement = await coreStore.createProductAnnouncement({
+    title: input.title,
+    message: input.message,
+    actionUrl: input.actionUrl?.trim() || '/notifications/system',
+    createdByUserId: req.userId!,
+    createdAt,
+  });
+  const users = await coreStore.listUsers();
+  for (const user of users) {
+    const settings = await getSettings(user.id);
+    if (!settings.productUpdates) {
+      continue;
+    }
+    await notifyUser({
+      userId: user.id,
+      type: 'product',
+      title: input.title,
+      description: input.message,
+      createdAt,
+      actionUrl: announcement.action_url ?? '/notifications/system',
+      emailOverride: true,
+      pushOverride: true,
+    });
+  }
+  res.status(201).json({
+    announcement: {
+      ...buildProductAnnouncement(announcement),
+      createdByName: (await coreStore.findUserById(req.userId!))?.name ?? 'Admin',
+    },
+  });
 });
 
 app.get('/api/admin/moderation/reports/:reportId', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -2195,15 +2597,16 @@ app.post('/api/admin/moderation/reports/:reportId/review', requireAuth, requireA
   if (!report) {
     return res.status(404).json({ error: 'Moderation report not found' });
   }
-  await coreStore.createNotification({
+  await notifyUser({
     userId: report.reporter_user_id,
-    type: 'comment',
+    type: 'moderation',
     title: 'Moderation report updated',
     description: `Your report is now marked ${input.status}.`,
     createdAt: getDbTimestamp(),
-    actionUrl: `/notifications`,
+    actionUrl: `/notifications/system`,
+    emailOverride: true,
+    pushOverride: true,
   });
-  sendLiveEvent(report.reporter_user_id, { type: 'notifications-updated' });
   res.json({ report: await buildModerationReport(report) });
 });
 
@@ -2395,14 +2798,63 @@ app.get('/api/settings', requireAuth, async (req: AuthenticatedRequest, res) => 
 
 app.patch('/api/settings', requireAuth, requireCsrf, async (req: AuthenticatedRequest, res) => {
   const input = parseOrThrow(settingsSchema, req.body);
-  const settings = { ...(await getSettings(req.userId!)), ...input };
+  const previousSettings = await getSettings(req.userId!);
+  const settings = { ...previousSettings, ...input };
+  if (!settings.emailEnabled) {
+    settings.dailyDigest = false;
+    settings.weeklyDigest = false;
+  }
   await coreStore.updateSettings(req.userId!, settings);
-  sendLiveEvent(req.userId!, { type: 'notifications-updated' });
+  if (!previousSettings.productUpdates && settings.productUpdates) {
+    await notifyUser({
+      userId: req.userId!,
+      type: 'product',
+      title: 'Product updates enabled',
+      description: 'You will now receive updates about new features, improvements, and research tools.',
+      createdAt: getDbTimestamp(),
+      actionUrl: '/notification-settings',
+      emailOverride: false,
+      pushOverride: false,
+    });
+  }
   res.json(await getSettings(req.userId!));
 });
 
+app.post('/api/digests/send-now', requireAuth, requireCsrf, async (req: AuthenticatedRequest, res) => {
+  const { kind } = parseOrThrow(digestSendSchema, req.body);
+  const result = await sendDigestNow(req.userId!, kind);
+  res.status(201).json({
+    kind,
+    recipient: result.recipient,
+    subject: result.subject,
+    paperCount: result.paperCount,
+    delivery: result.delivery,
+  });
+});
+
+app.get('/api/push/public-key', requireAuth, async (_req: AuthenticatedRequest, res) => {
+  res.json({ publicKey: getPushPublicKey() });
+});
+
+app.post('/api/push/subscribe', requireAuth, requireCsrf, async (req: AuthenticatedRequest, res) => {
+  const subscription = parseOrThrow(pushSubscriptionSchema, req.body);
+  await coreStore.upsertPushSubscription({
+    userId: req.userId!,
+    endpoint: subscription.endpoint,
+    p256dh: subscription.keys.p256dh,
+    auth: subscription.keys.auth,
+  });
+  res.status(201).json({ ok: true });
+});
+
+app.delete('/api/push/subscribe', requireAuth, requireCsrf, async (req: AuthenticatedRequest, res) => {
+  const subscription = parseOrThrow(pushSubscriptionSchema, req.body);
+  await coreStore.deletePushSubscription(req.userId!, subscription.endpoint);
+  res.status(204).send();
+});
+
 app.patch('/api/profile', requireAuth, requireCsrf, async (req: AuthenticatedRequest, res) => {
-  const { name, email, affiliation, bio, title, imageUrl, isAffiliationVerified, currentPassword } = parseOrThrow(updateProfileSchema, req.body);
+  const { name, email, orcidId, affiliation, bio, title, imageUrl, isAffiliationVerified, currentPassword } = parseOrThrow(updateProfileSchema, req.body);
   const existingUser = await coreStore.findUserById(req.userId!);
   const emailChanged = Boolean(existingUser && email.toLowerCase() !== existingUser.email.toLowerCase());
   const affiliationChanged = Boolean(existingUser && affiliation.trim().toLowerCase() !== existingUser.affiliation.trim().toLowerCase());
@@ -2421,6 +2873,7 @@ app.patch('/api/profile', requireAuth, requireCsrf, async (req: AuthenticatedReq
     userId: req.userId!,
     name,
     email,
+    orcidId: orcidId?.trim() || null,
     affiliation,
     bio,
     title,
@@ -2446,7 +2899,7 @@ app.post('/api/social/follow/:userId', requireAuth, requireCsrf, async (req: Aut
   }
   await coreStore.createFollow(req.userId!, targetUserId, getDbTimestamp());
   const actor = await coreStore.findUserById(req.userId!);
-  await coreStore.createNotification({
+  await notifyUser({
     userId: targetUserId,
     type: 'collab',
     title: 'New follower',
@@ -2454,9 +2907,10 @@ app.post('/api/social/follow/:userId', requireAuth, requireCsrf, async (req: Aut
     createdAt: getDbTimestamp(),
     actorUserId: req.userId!,
     actionUrl: `/profile/${req.userId!}`,
+    emailOverride: true,
+    pushOverride: true,
   });
   broadcastLiveEvent([req.userId!, targetUserId], { type: 'social-updated' });
-  sendLiveEvent(targetUserId, { type: 'notifications-updated' });
   res.json(await getSocialBootstrap(req.userId!));
 });
 
@@ -2464,6 +2918,49 @@ app.delete('/api/social/follow/:userId', requireAuth, requireCsrf, async (req: A
   await coreStore.deleteFollow(req.userId!, req.params.userId);
   broadcastLiveEvent([req.userId!, req.params.userId], { type: 'social-updated' });
   res.json(await getSocialBootstrap(req.userId!));
+});
+
+app.get('/api/social/profile/:userId/connections', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const targetUserId = req.params.userId;
+  const targetUser = await coreStore.findUserById(targetUserId);
+  if (!targetUser) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  if (targetUserId !== req.userId && !await canViewProfile(req.userId!, targetUserId)) {
+    return res.status(403).json({ error: 'This profile is not available to you.' });
+  }
+
+  const [followerIds, followingIds] = await Promise.all([
+    coreStore.listFollowerIdsByUserId(targetUserId),
+    coreStore.listFollowingIdsByUserId(targetUserId),
+  ]);
+
+  const followers = await Promise.all(followerIds.map(async (userId) => {
+    const follower = await coreStore.findUserById(userId);
+    if (!follower) {
+      return null;
+    }
+    if (userId !== req.userId && !await canViewProfile(req.userId!, userId)) {
+      return null;
+    }
+    return buildUser(follower, req.userId);
+  }));
+
+  const following = await Promise.all(followingIds.map(async (userId) => {
+    const followedUser = await coreStore.findUserById(userId);
+    if (!followedUser) {
+      return null;
+    }
+    if (userId !== req.userId && !await canViewProfile(req.userId!, userId)) {
+      return null;
+    }
+    return buildUser(followedUser, req.userId);
+  }));
+
+  res.json({
+    followers: followers.filter((user): user is Awaited<ReturnType<typeof buildUser>> => Boolean(user)),
+    following: following.filter((user): user is Awaited<ReturnType<typeof buildUser>> => Boolean(user)),
+  });
 });
 
 app.post('/api/social/share', requireAuth, requireCsrf, async (req: AuthenticatedRequest, res) => {
@@ -2477,7 +2974,7 @@ app.post('/api/social/share', requireAuth, requireCsrf, async (req: Authenticate
   await coreStore.createPreprintShares(req.userId!, preprintId, recipientIds, getDbTimestamp());
   const actor = await coreStore.findUserById(req.userId!);
   for (const recipientId of recipientIds) {
-    await coreStore.createNotification({
+    await notifyUser({
       userId: recipientId,
       type: 'share',
       title: 'Paper shared with you',
@@ -2485,8 +2982,9 @@ app.post('/api/social/share', requireAuth, requireCsrf, async (req: Authenticate
       createdAt: getDbTimestamp(),
       actorUserId: req.userId!,
       actionUrl: `/share/${preprintId}`,
+      emailOverride: true,
+      pushOverride: true,
     });
-    sendLiveEvent(recipientId, { type: 'notifications-updated' });
   }
   broadcastLiveEvent([req.userId!, ...recipientIds], { type: 'social-updated' });
   res.status(201).json({ shared: recipientIds.length });
@@ -2531,16 +3029,17 @@ app.post('/api/chats/:chatId/messages', requireAuth, requireCsrf, async (req: Au
   await coreStore.createMessage(chatId, req.userId!, text.trim(), getDbTimestamp());
   const actor = await coreStore.findUserById(req.userId!);
   for (const recipientId of recipients.filter((recipientId) => recipientId !== req.userId)) {
-    await coreStore.createNotification({
+    await notifyUser({
       userId: recipientId,
-      type: 'comment',
+      type: 'message',
       title: 'New direct message',
       description: `${actor?.name ?? 'A researcher'} sent you a new message.`,
       createdAt: getDbTimestamp(),
       actorUserId: req.userId!,
       actionUrl: `/chat/${chatId}`,
+      emailOverride: true,
+      pushOverride: true,
     });
-    sendLiveEvent(recipientId, { type: 'notifications-updated' });
   }
   broadcastLiveEvent(recipients, { type: 'chat-updated', chatId: String(chatId) });
   res.status(201).json({ chat: await buildChat(chatId, req.userId!) });
@@ -2605,6 +3104,12 @@ if (migrateOnly) {
       error: error instanceof Error ? error.message : String(error),
     }));
   });
+  void runDueDigests().catch((error) => {
+    console.warn(JSON.stringify({
+      type: 'digest_bootstrap_failed',
+      error: error instanceof Error ? error.message : String(error),
+    }));
+  });
   contentSyncInterval = setInterval(() => {
     void runDueContentSyncs().catch((error) => {
       console.warn(JSON.stringify({
@@ -2613,6 +3118,14 @@ if (migrateOnly) {
       }));
     });
   }, 60_000);
+  digestInterval = setInterval(() => {
+    void runDueDigests().catch((error) => {
+      console.warn(JSON.stringify({
+        type: 'digest_interval_failed',
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    });
+  }, Number(process.env.DIGEST_INTERVAL_MS ?? 300_000));
   httpServer = app.listen(port, () => {
     console.log(`Preprint Explorer API listening on http://localhost:${port}`);
   });
